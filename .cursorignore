@@ -1,0 +1,15 @@
+build/
+.dart_tool/
+android/
+ios/
+macos/
+linux/
+windows/
+web/
+.git/
+.fvm/
+ios/Pods/
+assets/
+**/*.png
+**/*.jpg
+**/*.jpeg
