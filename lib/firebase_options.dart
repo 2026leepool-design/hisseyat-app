@@ -63,7 +63,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '881387238093',
     projectId: 'hisseyatapp2026',
     storageBucket: 'hisseyatapp2026.firebasestorage.app',
-    iosBundleId: 'com.example.ilkDeneme',
+    iosBundleId: 'com.hisseyat.hisseliharikalar',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -72,7 +72,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '881387238093',
     projectId: 'hisseyatapp2026',
     storageBucket: 'hisseyatapp2026.firebasestorage.app',
-    iosBundleId: 'com.example.ilkDeneme',
+    iosBundleId: 'com.hisseyat.hisseliharikalar',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

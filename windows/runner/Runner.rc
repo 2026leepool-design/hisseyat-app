@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "ilk_deneme" "\0"
+            VALUE "CompanyName", "com.hisseyat" "\0"
+            VALUE "FileDescription", "hisseliharikalar" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "ilk_deneme" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "ilk_deneme.exe" "\0"
-            VALUE "ProductName", "ilk_deneme" "\0"
+            VALUE "InternalName", "hisseliharikalar" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.hisseyat. All rights reserved." "\0"
+            VALUE "OriginalFilename", "hisseliharikalar.exe" "\0"
+            VALUE "ProductName", "hisseliharikalar" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
