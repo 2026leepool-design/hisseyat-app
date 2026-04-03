@@ -1138,9 +1138,6 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
     required double karZarar,
     required double karZararYuzde,
   }) {
-    final isKar = karZarar >= 0;
-    final sembol = _dovizSembolu();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
