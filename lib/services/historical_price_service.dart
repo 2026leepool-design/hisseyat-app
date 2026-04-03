@@ -10,7 +10,7 @@ class HistoricalPriceService {
   };
 
   /// Sembole .IS ekler (Türk hisseleri). USDTRY, EURTRY vb. için dokunmaz.
-  static String _yahooSymbol(String raw) {
+  static String yahooSymbol(String raw) {
     final s = raw.trim().toUpperCase();
     if (s.contains('=X') || s.contains('.') && !s.endsWith('.IS')) return s;
     if (s.endsWith('.IS')) return s;
@@ -20,8 +20,8 @@ class HistoricalPriceService {
   /// Belirli tarihteki kapanış fiyatını döndürür.
   /// Hafta sonu veya tatil gününde veri yoksa bir önceki iş gününe recursive gider.
   static Future<double?> getClosePrice(String symbol, DateTime date) async {
-    final yahooSymbol = _yahooSymbol(symbol);
-    final result = await _fetchCloseForDate(yahooSymbol, date);
+    final symbolToFetch = yahooSymbol(symbol);
+    final result = await _fetchCloseForDate(symbolToFetch, date);
     if (result != null) return result;
     // Veri yoksa (hafta sonu vb.) bir gün geri git
     final prevDay = DateTime(date.year, date.month, date.day - 1);
