@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_theme.dart';
 import 'app_shell.dart';
@@ -21,6 +22,8 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
+  static const _storage = FlutterSecureStorage();
+
   // Controller'lar
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -68,7 +71,21 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     try {
       final prefs = await SharedPreferences.getInstance();
       final remember = prefs.getBool(_kRememberMe) ?? false;
-      final email = prefs.getString(_kSavedEmail);
+
+      // Try reading from secure storage first
+      String? email = await _storage.read(key: _kSavedEmail);
+
+      // If not found in secure storage, check SharedPreferences (migration)
+      if (email == null) {
+        email = prefs.getString(_kSavedEmail);
+        if (email != null) {
+          // Migrate to secure storage
+          await _storage.write(key: _kSavedEmail, value: email);
+          // Remove from insecure SharedPreferences
+          await prefs.remove(_kSavedEmail);
+        }
+      }
+
       if (mounted) {
         setState(() {
           _rememberMe = remember;
@@ -82,9 +99,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     final prefs = await SharedPreferences.getInstance();
     if (_rememberMe) {
       await prefs.setBool(_kRememberMe, true);
-      await prefs.setString(_kSavedEmail, _emailController.text.trim());
+      await _storage.write(key: _kSavedEmail, value: _emailController.text.trim());
+      // Ensure it's not in SharedPreferences anymore
+      await prefs.remove(_kSavedEmail);
     } else {
       await prefs.setBool(_kRememberMe, false);
+      await _storage.delete(key: _kSavedEmail);
       await prefs.remove(_kSavedEmail);
     }
   }
