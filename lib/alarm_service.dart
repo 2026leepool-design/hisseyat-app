@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -14,6 +15,7 @@ class AlarmService {
 
   /// Bildirim servisini başlatır
   static Future<void> initialize() async {
+    if (kIsWeb) return;
     if (_initialized) return;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -49,6 +51,7 @@ class AlarmService {
 
   /// Android 13+ için bildirim izni ister
   static Future<bool> requestNotificationPermission() async {
+    if (kIsWeb) return false;
     if (!_initialized) await initialize();
 
     final status = await Permission.notification.request();
@@ -57,6 +60,7 @@ class AlarmService {
 
   /// Uygulama açıkken alarm kontrolü (foreground)
   static Future<void> kontrolEtVeBildir() async {
+    if (kIsWeb) return;
     if (!_initialized) await initialize();
 
     try {

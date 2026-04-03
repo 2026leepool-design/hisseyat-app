@@ -1,18 +1,28 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import 'app_theme.dart';
+import 'crypto_detail_screen.dart';
+import 'crypto_theme.dart';
 import 'logo_service.dart';
+import 'services/app_mode_service.dart';
+import 'services/theme_service.dart';
+import 'models/crypto_coin.dart';
+import 'services/crypto_service.dart';
 import 'services/favori_hisse_service.dart';
 import 'stock_detail_screen.dart';
 import 'stock_logo.dart';
 import 'widgets/ai_analysis_bottom_sheet.dart';
+import 'widgets/crypto_logo.dart';
+import 'login_page.dart';
 import 'yahoo_finance_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Ana sayfa: Bugün başlığı, BIST/döviz/altın/gümüş, BIST30 hisseleri (önce favoriler), hisse ara.
+/// Ana sayfa: Hisse | Crypto toggle, Bugün, BIST/crypto piyasası, hisse/kripto ara.
 class AnaSayfaPage extends StatefulWidget {
   const AnaSayfaPage({super.key});
 
@@ -21,6 +31,7 @@ class AnaSayfaPage extends StatefulWidget {
 }
 
 class _AnaSayfaPageState extends State<AnaSayfaPage> {
+
   static const _piyasaSembolleri = [
     ('BIST100', 'XU100.IS'),
     ('BIST30', 'XU030.IS'),
@@ -42,25 +53,47 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
   bool _piyasaYukleniyor = true;
   List<StockChartMeta> _bist30Liste = [];
   bool _bist30Yukleniyor = true;
+  Set<String> _favoriSet = {};
   Timer? _yenilemeTimer;
+
+  // Kripto modu
+  List<CryptoCoin> _cryptoListe = [];
+  bool _cryptoYukleniyor = true;
+  Timer? _cryptoTimer;
 
   @override
   void initState() {
     super.initState();
     _piyasaYukle();
     _bist30Yukle();
+    _cryptoYukle();
     _yenilemeTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (mounted) {
+      if (mounted && !AppModeService.isCrypto) {
         _piyasaYukle(sessiz: true);
         _bist30Yukle(sessiz: true);
       }
+    });
+    _cryptoTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted && AppModeService.isCrypto) _cryptoYukle(sessiz: true);
     });
   }
 
   @override
   void dispose() {
     _yenilemeTimer?.cancel();
+    _cryptoTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _cryptoYukle({bool sessiz = false}) async {
+    if (!sessiz) setState(() => _cryptoYukleniyor = true);
+    final liste = await CryptoService.getCryptoMarket();
+    if (mounted) {
+      setState(() {
+        _cryptoListe = liste;
+        _cryptoYukleniyor = false;
+      });
+    }
   }
 
   Future<void> _piyasaYukle({bool sessiz = false}) async {
@@ -80,9 +113,10 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
     if (!mounted) return;
     if (!sessiz) setState(() => _bist30Yukleniyor = true);
     final metas = <StockChartMeta>[];
+    Set<String> favoriSet = {};
     try {
       final favoriler = await FavoriHisseService.getFavoriler();
-      final favoriSet = favoriler.map((s) => s.toUpperCase()).toSet();
+      favoriSet = favoriler.map((s) => s.toUpperCase()).toSet();
       final bist30Set = _bist30Sembolleri.map((s) => s.toUpperCase()).toSet();
       for (var i = 0; i < _bist30Sembolleri.length; i += 8) {
         if (!mounted) return;
@@ -124,6 +158,7 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
     if (mounted) {
       setState(() {
         _bist30Liste = metas;
+        _favoriSet = favoriSet;
         _bist30Yukleniyor = false;
       });
     }
@@ -142,22 +177,122 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
     });
   }
 
+  void _cryptoDetayaGit(CryptoCoin coin) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => CryptoDetailScreen(coin: coin),
+      ),
+    ).then((_) {
+      if (mounted) _cryptoYukle(sessiz: true);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppModeService.instance.cryptoMode,
+      builder: (context, cryptoMode, _) {
+        final bgColor = cryptoMode
+            ? CryptoTheme.backgroundGrey(context)
+            : AppTheme.backgroundGrey(context);
+
+        return Scaffold(
+          backgroundColor: bgColor,
+          body: SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(value: false, label: Text('Hisse'), icon: Icon(Icons.bar_chart_rounded, size: 18)),
+                            ButtonSegment(value: true, label: Text('Crypto'), icon: Icon(Icons.currency_bitcoin_rounded, size: 18)),
+                          ],
+                          selected: {cryptoMode},
+                          style: ButtonStyle(
+                            backgroundColor: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.selected)) {
+                                return cryptoMode ? CryptoTheme.cryptoAmber : AppTheme.smokyJade;
+                              }
+                              return null;
+                            }),
+                          ),
+                          onSelectionChanged: (Set<bool> v) {
+                            AppModeService.instance.setCryptoMode(v.first);
+                            setState(() {});
+                          },
+                        ),
+                      ),
+                      Builder(
+                        builder: (context) {
+                          final isDark = Theme.of(context).brightness == Brightness.dark;
+                          return IconButton(
+                            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode, size: 24),
+                            tooltip: isDark ? 'Açık tema' : 'Koyu tema',
+                            onPressed: () => ThemeService.instance.toggleDarkLight(context),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.logout, size: 24),
+                        tooltip: 'Oturumu Kapat',
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Oturumu Kapat'),
+                              content: const Text('Hesabınızdan çıkış yapmak istediğinize emin misiniz?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Vazgeç')),
+                                FilledButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  style: FilledButton.styleFrom(backgroundColor: AppTheme.softRed),
+                                  child: const Text('Çıkış Yap'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm != true) return;
+                          await Supabase.instance.client.auth.signOut();
+                          if (!context.mounted) return;
+                          Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+                            MaterialPageRoute(builder: (_) => const LoginPage()),
+                            (route) => false,
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: cryptoMode ? _buildCryptoContent(context) : _buildHisseContent(context),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildHisseContent(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final cardWidth = screenWidth > 0 ? (screenWidth - 40 - 20) / 3 : 100.0;
     final cardHeight = cardWidth / 1.5;
     final gridHeight = 2 * cardHeight + 10;
 
-    return Scaffold(
-      backgroundColor: AppTheme.backgroundGrey(context),
-      body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                child: Text(
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
                   'Bugün',
                   style: GoogleFonts.inter(
                     fontSize: 28,
@@ -165,9 +300,20 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                     color: Theme.of(context).colorScheme.onSurface,
                   ),
                 ),
-              ),
+                Text(
+                  Supabase.instance.client.auth.currentUser?.email ?? '',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            SliverToBoxAdapter(
+          ),
+        ),
+        SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: _piyasaYukleniyor
@@ -227,12 +373,30 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                   return TextField(
                     controller: controller,
                     focusNode: focusNode,
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: [
+                      TextInputFormatter.withFunction((old, replace) => TextEditingValue(
+                        text: replace.text.toUpperCase(),
+                        selection: replace.selection,
+                      )),
+                    ],
                     decoration: InputDecoration(
                       labelText: 'Hisse ara',
                       hintText: 'THYAO, GARAN...',
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       filled: true,
                       prefixIcon: const Icon(Icons.search),
+                      suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                        valueListenable: controller,
+                        builder: (context, value, _) {
+                          if (value.text.isEmpty) return const SizedBox.shrink();
+                          return IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () => controller.clear(),
+                            tooltip: 'Temizle',
+                          );
+                        },
+                      ),
                     ),
                     onSubmitted: (_) => onFieldSubmitted(),
                   );
@@ -347,6 +511,8 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                       ? ((meta.price - prev) / prev) * 100
                       : 0.0;
                   final volume = meta.regularMarketVolume ?? 0.0;
+                  final symKey = meta.symbol.toUpperCase().replaceAll('.IS', '');
+                  final isFavori = _favoriSet.contains(symKey);
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                     child: Material(
@@ -359,7 +525,18 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                           child: Row(
                             children: [
-                              StockLogo(symbol: meta.symbol, size: 44),
+                              Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  StockLogo(symbol: meta.symbol, size: 44),
+                                  if (isFavori)
+                                    Positioned(
+                                      top: -4,
+                                      right: -4,
+                                      child: Icon(Icons.star_rounded, color: Colors.amber[700], size: 20),
+                                    ),
+                                ],
+                              ),
                               const SizedBox(width: 14),
                               Expanded(
                                 child: Column(
@@ -386,13 +563,28 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                                   ],
                                 ),
                               ),
-                              Text(
-                                fiyatStr,
-                                style: GoogleFonts.inter(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                  color: AppTheme.navyBlue,
-                                ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    fiyatStr,
+                                    style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                      color: AppTheme.navyBlue,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${changePercent >= 0 ? '+' : ''}${changePercent.toStringAsFixed(2)}%',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: changePercent >= 0 ? AppTheme.success : AppTheme.softRed,
+                                    ),
+                                  ),
+                                ],
                               ),
                               IconButton(
                                 icon: Icon(
@@ -425,10 +617,272 @@ class _AnaSayfaPageState extends State<AnaSayfaPage> {
                 childCount: _bist30Liste.length,
               ),
             ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
-        ],
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+  }
+
+  Widget _buildCryptoContent(BuildContext context) {
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Kripto Piyasası',
+                  style: GoogleFonts.inter(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    color: CryptoTheme.textPrimaryFor(context),
+                  ),
+                ),
+                Text(
+                  Supabase.instance.client.auth.currentUser?.email ?? '',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: CryptoTheme.textSecondaryFor(context),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
         ),
-      ),
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Autocomplete<CryptoCoin>(
+              optionsBuilder: (editingValue) {
+                final metin = editingValue.text.trim();
+                if (metin.length < 2) return Future.value([]);
+                return CryptoService.cryptoAra(metin);
+              },
+              displayStringForOption: (c) => '${c.displaySymbol} — \$${NumberFormat('#,##0.##', 'tr_TR').format(c.price)}',
+              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  textCapitalization: TextCapitalization.characters,
+                  inputFormatters: [
+                    TextInputFormatter.withFunction((old, replace) => TextEditingValue(
+                      text: replace.text.toUpperCase(),
+                      selection: replace.selection,
+                    )),
+                  ],
+                  decoration: InputDecoration(
+                    labelText: 'Kripto ara',
+                    hintText: 'BTC, ETH, SOL...',
+                    filled: true,
+                    fillColor: CryptoTheme.cardColor(context),
+                    prefixIcon: Icon(Icons.search, color: CryptoTheme.cryptoAmber),
+                    suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: controller,
+                      builder: (context, value, _) {
+                        if (value.text.isEmpty) return const SizedBox.shrink();
+                        return IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () => controller.clear(),
+                          tooltip: 'Temizle',
+                        );
+                      },
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(CryptoTheme.radius)),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(CryptoTheme.radius),
+                      borderSide: BorderSide(
+                        color: CryptoTheme.textPrimaryFor(context).withValues(alpha: 0.15),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(CryptoTheme.radius),
+                      borderSide: BorderSide(color: CryptoTheme.primaryElectric.withValues(alpha: 0.45)),
+                    ),
+                  ),
+                  style: TextStyle(color: CryptoTheme.textPrimaryFor(context), fontWeight: FontWeight.w600),
+                  onSubmitted: (_) => onFieldSubmitted(),
+                );
+              },
+              optionsViewBuilder: (context, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 8,
+                    color: CryptoTheme.cardColor(context),
+                    borderRadius: BorderRadius.circular(CryptoTheme.radius),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 240),
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final coin = options.elementAt(index);
+                          return InkWell(
+                            onTap: () {
+                              onSelected(coin);
+                              _cryptoDetayaGit(coin);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              child: Row(
+                                children: [
+                                  CryptoLogo(symbol: coin.symbol, size: 36),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          coin.displaySymbol,
+                                          style: GoogleFonts.inter(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 15,
+                                            color: CryptoTheme.textPrimaryFor(context),
+                                          ),
+                                        ),
+                                        Text(
+                                          '\$${NumberFormat('#,##0.##', 'tr_TR').format(coin.price)}',
+                                            style: TextStyle(
+                                            fontSize: 12,
+                                            color: CryptoTheme.textSecondaryFor(context),
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    '${coin.changePercent >= 0 ? '+' : ''}${coin.changePercent.toStringAsFixed(2)}%',
+                                    style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                      color: coin.changePercent >= 0
+                                          ? CryptoTheme.positiveChange
+                                          : CryptoTheme.negativeChange,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
+              onSelected: (coin) => _cryptoDetayaGit(coin),
+            ),
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        if (_cryptoYukleniyor)
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: CryptoTheme.cryptoAmber,
+                ),
+              ),
+            ),
+          )
+        else if (_cryptoListe.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+              child: Column(
+                children: [
+                  Icon(Icons.cloud_off_rounded, size: 48, color: CryptoTheme.textSecondaryFor(context)),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Kripto verileri yüklenemedi.\nİnternet bağlantınızı kontrol edin.',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: CryptoTheme.textSecondaryFor(context),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _cryptoYukle,
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    label: const Text('Yeniden dene'),
+                    style: TextButton.styleFrom(foregroundColor: CryptoTheme.cryptoAmber),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final coin = _cryptoListe[index];
+                final fmt = NumberFormat('#,##0.##', 'tr_TR');
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                  child: Material(
+                    color: CryptoTheme.cardColor(context),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: () => _cryptoDetayaGit(coin),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        child: Row(
+                          children: [
+                            CryptoLogo(symbol: coin.symbol, size: 44),
+                            const SizedBox(width: 14),
+                            Expanded(
+                                child: Text(
+                                coin.displaySymbol,
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                  color: CryptoTheme.textPrimaryFor(context),
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '\$${fmt.format(coin.price)}',
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: CryptoTheme.priceAccent,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              '${coin.changePercent >= 0 ? '+' : ''}${coin.changePercent.toStringAsFixed(2)}%',
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: coin.changePercent >= 0
+                                    ? CryptoTheme.positiveChange
+                                    : CryptoTheme.negativeChange,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+              childCount: _cryptoListe.length,
+            ),
+          ),
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
     );
   }
 }

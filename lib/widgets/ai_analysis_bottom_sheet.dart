@@ -6,15 +6,19 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../app_theme.dart';
+import '../crypto_theme.dart';
 import '../services/ai_analysis_service.dart';
 
-/// AI analiz bottom sheet: yükleniyor (dönen mesajlar + animasyon) veya Markdown rapor.
+/// AI analiz bottom sheet: hisse veya kripto. [isCrypto] true ise kripto analizi ve crypto renk paleti kullanılır.
+/// [stockContext] verilirse hisse analizinde 52w değişim, F/K, PD/DD, net kar, sektör, 15/52 gün ortalamaları prompt'a eklenir.
 void showAIAnalysisBottomSheet(
   BuildContext context, {
   required String symbol,
   required double price,
   required double volume,
   required double changePercent,
+  bool isCrypto = false,
+  StockAnalysisContext? stockContext,
 }) {
   showModalBottomSheet<void>(
     context: context,
@@ -25,6 +29,8 @@ void showAIAnalysisBottomSheet(
       price: price,
       volume: volume,
       changePercent: changePercent,
+      isCrypto: isCrypto,
+      stockContext: stockContext,
     ),
   );
 }
@@ -34,12 +40,16 @@ class _AIAnalysisSheet extends StatefulWidget {
   final double price;
   final double volume;
   final double changePercent;
+  final bool isCrypto;
+  final StockAnalysisContext? stockContext;
 
   const _AIAnalysisSheet({
     required this.symbol,
     required this.price,
     required this.volume,
     required this.changePercent,
+    this.isCrypto = false,
+    this.stockContext,
   });
 
   @override
@@ -62,6 +72,20 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
   String? _result;
   String? _error;
 
+  Future<String> _runStockAnalysis() async {
+    final ctx = await AIAnalysisService.enrichWithChartAverages(
+      widget.symbol,
+      widget.stockContext,
+    );
+    return AIAnalysisService.getAnalysis(
+      widget.symbol,
+      widget.price,
+      widget.volume,
+      widget.changePercent,
+      stockContext: ctx,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -73,12 +97,15 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
         });
       }
     });
-    AIAnalysisService.getAnalysis(
-      widget.symbol,
-      widget.price,
-      widget.volume,
-      widget.changePercent,
-    ).then((text) {
+    final future = widget.isCrypto
+        ? AIAnalysisService.getCryptoAnalysis(
+            widget.symbol,
+            widget.price,
+            widget.volume,
+            widget.changePercent,
+          )
+        : _runStockAnalysis();
+    future.then((text) {
       _messageTimer?.cancel();
       if (mounted) setState(() => _result = text);
     }).catchError((e, _) {
@@ -96,10 +123,18 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? AppTheme.bgDark : const Color(0xFF1a1d29);
-    final surface = isDark ? AppTheme.surfaceDark : const Color(0xFF252836);
-    final textColor = AppTheme.textPrimary;
-    final textSecondary = AppTheme.textSecondary;
+    final isCrypto = widget.isCrypto;
+    final accentColor = isCrypto ? CryptoTheme.cryptoAmber : AppTheme.smokyJade;
+    // Hisse: Precision Editorial — light'ta açık zemin; kripto: Etheric Neon.
+    final bg = isCrypto
+        ? CryptoTheme.backgroundGrey(context)
+        : (isDark ? AppTheme.bgDark : AppTheme.surface);
+    final textColor = isCrypto
+        ? CryptoTheme.textPrimaryFor(context)
+        : (isDark ? AppTheme.textPrimary : AppTheme.onSurface);
+    final textSecondary = isCrypto
+        ? CryptoTheme.textSecondaryFor(context)
+        : (isDark ? AppTheme.textSecondary : AppTheme.onSurface.withValues(alpha: 0.65));
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.88,
@@ -108,7 +143,7 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
-            color: AppTheme.smokyJade.withValues(alpha: 0.2),
+            color: accentColor.withValues(alpha: 0.2),
             blurRadius: 20,
             offset: const Offset(0, -4),
           ),
@@ -129,10 +164,10 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
             child: Row(
               children: [
-                Icon(Icons.auto_awesome, color: AppTheme.smokyJade, size: 24),
+                Icon(Icons.auto_awesome, color: accentColor, size: 24),
                 const SizedBox(width: 10),
                 Text(
-                  'Yapay Zeka Hisse Analizi',
+                  isCrypto ? 'Yapay Zeka Kripto Analizi' : 'Yapay Zeka Hisse Analizi',
                   style: GoogleFonts.inter(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
@@ -142,7 +177,7 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
               ],
             ),
           ),
-          const Divider(height: 1, color: Colors.white12),
+          const SizedBox(height: 16),
           Expanded(
             child: _error != null
                 ? Padding(
@@ -154,7 +189,7 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
                           Icon(
                             Icons.error_outline_rounded,
                             size: 48,
-                            color: AppTheme.softRed,
+                            color: isCrypto ? CryptoTheme.negativeChange : AppTheme.softRed,
                           ),
                           const SizedBox(height: 16),
                           Text(
@@ -190,7 +225,7 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
                             h2: GoogleFonts.inter(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              color: AppTheme.smokyJade,
+                              color: accentColor,
                             ),
                             strong: GoogleFonts.inter(
                               fontWeight: FontWeight.w700,
@@ -208,7 +243,11 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
                           ),
                         ),
                       )
-                    : _LoadingView(message: _loadingMessage),
+                    : _LoadingView(
+                        message: _loadingMessage,
+                        accentColor: accentColor,
+                        isCrypto: isCrypto,
+                      ),
           ),
         ],
       ),
@@ -218,8 +257,14 @@ class _AIAnalysisSheetState extends State<_AIAnalysisSheet>
 
 class _LoadingView extends StatefulWidget {
   final String message;
+  final Color? accentColor;
+  final bool isCrypto;
 
-  const _LoadingView({required this.message});
+  const _LoadingView({
+    required this.message,
+    this.accentColor,
+    this.isCrypto = false,
+  });
 
   @override
   State<_LoadingView> createState() => _LoadingViewState();
@@ -246,6 +291,18 @@ class _LoadingViewState extends State<_LoadingView>
 
   @override
   Widget build(BuildContext context) {
+    final accent = widget.accentColor ?? AppTheme.smokyJade;
+    final isCrypto = widget.isCrypto;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isCrypto
+        ? CryptoTheme.textPrimaryFor(context)
+        : (isDark ? AppTheme.textPrimary : AppTheme.onSurface);
+    final textSecondary = isCrypto
+        ? CryptoTheme.textSecondaryFor(context)
+        : (isDark ? AppTheme.textSecondary : AppTheme.onSurface.withValues(alpha: 0.65));
+    final innerCircleBg = isCrypto
+        ? CryptoTheme.backgroundGrey(context)
+        : (isDark ? AppTheme.bgDark : AppTheme.surface);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -262,31 +319,31 @@ class _LoadingViewState extends State<_LoadingView>
                     shape: BoxShape.circle,
                     gradient: SweepGradient(
                       colors: [
-                        AppTheme.smokyJade,
-                        AppTheme.smokyJade.withValues(alpha: 0.3),
-                        AppTheme.slateTeal.withValues(alpha: 0.5),
-                        AppTheme.smokyJade,
+                        accent,
+                        accent.withValues(alpha: 0.3),
+                        accent.withValues(alpha: 0.5),
+                        accent,
                       ],
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: AppTheme.smokyJade.withValues(alpha: 0.4),
+                        color: accent.withValues(alpha: 0.4),
                         blurRadius: 16,
                         spreadRadius: 2,
                       ),
                     ],
                   ),
-                  child: const Padding(
-                    padding: EdgeInsets.all(4),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Color(0xFF1a1d29),
+                        color: innerCircleBg,
                       ),
                       child: Center(
                         child: Icon(
                           Icons.auto_awesome,
-                          color: AppTheme.smokyJade,
+                          color: accent,
                           size: 28,
                         ),
                       ),
@@ -302,7 +359,7 @@ class _LoadingViewState extends State<_LoadingView>
             style: GoogleFonts.inter(
               fontSize: 16,
               fontWeight: FontWeight.w600,
-              color: AppTheme.textPrimary,
+              color: textColor,
             ),
           ),
           const SizedBox(height: 8),
@@ -313,7 +370,7 @@ class _LoadingViewState extends State<_LoadingView>
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 fontSize: 14,
-                color: AppTheme.textSecondary,
+                color: textSecondary,
               ),
             ),
           ),

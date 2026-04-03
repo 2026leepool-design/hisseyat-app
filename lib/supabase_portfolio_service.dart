@@ -9,17 +9,26 @@ class SupabasePortfolioService {
 
   // ========== PORTFÖY YÖNETİMİ ==========
 
-  /// Tüm portföyleri yükler (sahip olunan + paylaşılan) ve eğer portföy yoksa default "Ana Portföy" oluşturur
-  static Future<List<Portfolio>> portfoyleriYukle() async {
+  /// Tüm portföyleri yükler (sahip olunan + paylaşılan).
+  /// [assetType]: 'stock' = hisse (varsayılan), 'crypto' = kripto
+  static Future<List<Portfolio>> portfoyleriYukle({String assetType = 'stock'}) async {
     final userId = _userId;
     if (userId == null) return [];
 
+    final isCrypto = assetType == 'crypto';
+    final defaultName = isCrypto ? 'Ana Kripto Portföy' : 'Ana Portföy';
+
     try {
-      final ownedResponse = await _client
+      var query = _client
           .from('portfolios')
           .select()
-          .eq('user_id', userId)
-          .order('created_at', ascending: false);
+          .eq('user_id', userId);
+      if (assetType == 'crypto') {
+        query = query.eq('asset_type', 'crypto');
+      } else {
+        query = query.or('asset_type.eq.stock,asset_type.is.null');
+      }
+      final ownedResponse = await query.order('created_at', ascending: false);
 
       final ownedIds = <String>{};
       try {
@@ -52,7 +61,7 @@ class SupabasePortfolioService {
               .eq('id', pid)
               .maybeSingle();
           if (pResponse != null) {
-            final m = pResponse as Map<String, dynamic>;
+            final m = pResponse;
             m['is_shared_with_me'] = true;
             m['share_permission'] = 'readonly';
             final ownerId = m['user_id'] as String?;
@@ -74,20 +83,20 @@ class SupabasePortfolioService {
         // portfolio_shares tablosu yoksa veya hata varsa devam et
       }
 
-      // Eğer hiç portföy yoksa, default "Ana Portföy" oluştur
+      // Eğer hiç portföy yoksa, default oluştur
       if (portfoyler.isEmpty) {
         try {
-          final defaultPortfoy = await portfoyOlustur('Ana Portföy');
+          final defaultPortfoy = await portfoyOlustur(defaultName, assetType: assetType ?? 'stock');
           return [defaultPortfoy];
         } catch (_) {
           return [];
         }
       }
 
-      // Ana Portföy'ü listenin başına taşı, sonra sahip olunanlar, en sonda paylaşılanlar
+      // Ana Portföy/Kripto'yu listenin başına taşı
       portfoyler.sort((a, b) {
-        if (a.name == 'Ana Portföy' && a.userId == userId) return -1;
-        if (b.name == 'Ana Portföy' && b.userId == userId) return 1;
+        if (a.name == defaultName && a.userId == userId) return -1;
+        if (b.name == defaultName && b.userId == userId) return 1;
         if (!a.isSharedWithMe && b.isSharedWithMe) return -1;
         if (a.isSharedWithMe && !b.isSharedWithMe) return 1;
         return 0;
@@ -95,7 +104,7 @@ class SupabasePortfolioService {
       return portfoyler;
     } catch (e) {
       try {
-        final defaultPortfoy = await portfoyOlustur('Ana Portföy');
+        final defaultPortfoy = await portfoyOlustur(defaultName, assetType: assetType ?? 'stock');
         return [defaultPortfoy];
       } catch (_) {
         return [];
@@ -104,7 +113,7 @@ class SupabasePortfolioService {
   }
 
   /// Yeni portföy oluşturur
-  static Future<Portfolio> portfoyOlustur(String name) async {
+  static Future<Portfolio> portfoyOlustur(String name, {String assetType = 'stock'}) async {
     final userId = _userId;
     if (userId == null) throw Exception('Kullanıcı girişi gerekli.');
 
@@ -112,9 +121,10 @@ class SupabasePortfolioService {
       final response = await _client.from('portfolios').insert({
         'user_id': userId,
         'name': name,
+        'asset_type': assetType,
       }).select().single();
 
-      return Portfolio.fromJson(response as Map<String, dynamic>);
+      return Portfolio.fromJson(response);
     } catch (e) {
       // Daha açıklayıcı hata mesajı
       final errorMsg = e.toString().toLowerCase();
@@ -142,7 +152,7 @@ class SupabasePortfolioService {
           .eq('id', portfolioId)
           .eq('user_id', userId)
           .maybeSingle();
-      if (response != null) return Portfolio.fromJson(response as Map<String, dynamic>);
+      if (response != null) return Portfolio.fromJson(response);
       final share = await _client
           .from('portfolio_shares')
           .select('permission')
@@ -156,7 +166,7 @@ class SupabasePortfolioService {
           .eq('id', portfolioId)
           .maybeSingle();
       if (response == null) return null;
-      final m = response as Map<String, dynamic>;
+      final m = response;
       m['is_shared_with_me'] = true;
       m['share_permission'] = share['permission'] as String?;
       return Portfolio.fromJson(m);
@@ -373,22 +383,40 @@ class SupabasePortfolioService {
       });
     }
 
-    // Bu hisseye ait işlemleri kaynak portföyden hedefe taşı
+    // Bu hisseye ait işlemleri kaynak portföyden hedefe taşı.
+    // Eski kayıtlarda Ana Portföy işlemleri portfolio_id = null olabilir;
+    // bu durumda da aynı hisseyi hedef portföye güncelle.
+    final anaId = await anaPortfoyId();
+    final kaynakAnaPortfoyMu = anaId != null && fromPortfolioId == anaId;
+
     await _client
         .from('transactions')
         .update({'portfolio_id': toPortfolioId})
         .eq('user_id', userId)
         .eq('symbol', symbol)
         .eq('portfolio_id', fromPortfolioId);
+
+    if (kaynakAnaPortfoyMu) {
+      try {
+        await _client
+            .from('transactions')
+            .update({'portfolio_id': toPortfolioId})
+            .eq('user_id', userId)
+            .eq('symbol', symbol)
+            .filter('portfolio_id', 'is', null);
+      } catch (_) {
+        // portfolio_id kolonu eski şemada yoksa sessizce geç
+      }
+    }
   }
 
-  /// "Ana Portföy" ID'sini döndürür (adı "Ana Portföy" olan veya ilk portföy).
-  /// Portföy yoksa null döner.
-  static Future<String?> anaPortfoyId() async {
-    final list = await portfoyleriYukle();
+  /// "Ana Portföy" ID'sini döndürür (adı "Ana Portföy/Ana Kripto Portföy" olan veya ilk portföy).
+  static Future<String?> anaPortfoyId({String assetType = 'stock'}) async {
+    final list = await portfoyleriYukle(assetType: assetType);
     if (list.isEmpty) return null;
+    final defaultName = assetType == 'crypto' ? 'Ana Kripto Portföy' : 'Ana Portföy';
     try {
-      return list.firstWhere((p) => p.name == 'Ana Portföy').id;
+      return list.firstWhere((p) => p.name == defaultName).id;
     } catch (_) {
       return list.first.id;
     }
@@ -418,9 +446,8 @@ class SupabasePortfolioService {
   }
 
   /// Kullanıcının portföyünü yükler (filtreli veya tümü).
-  /// Paylaşılan portföyler için sahip user_id kullanılır.
-  /// "Tümü" görünümünde kendi portföyü + paylaşılan portföylerin holding'leri dahil edilir.
-  static Future<List<PortfolioRow>> portfoyYukle({String? portfolioId}) async {
+  /// [assetType]: 'stock' veya 'crypto' – "Tümü" görünümünde sadece bu tür portföyler
+  static Future<List<PortfolioRow>> portfoyYukle({String? portfolioId, String assetType = 'stock'}) async {
     final userId = _userId;
     if (userId == null) return [];
 
@@ -439,12 +466,19 @@ class SupabasePortfolioService {
         query = query.eq('portfolio_id', portfolioId);
       }
 
-      final response = await query.order('symbol');
+      var response = await query.order('symbol');
       var rows = (response as List)
           .map((e) => PortfolioRow.fromJson(e as Map<String, dynamic>))
           .toList();
 
-      // "Tümü" görünümünde paylaşılan portföylerin holding'lerini de ekle
+      // "Tümü" görünümünde sadece bu asset type'a ait portföylerin satırları
+      if (portfolioId == null) {
+        final portfoyler = await portfoyleriYukle(assetType: assetType);
+        final validIds = portfoyler.map((p) => p.id).toSet();
+        rows = rows.where((r) => r.portfolioId == null || validIds.contains(r.portfolioId)).toList();
+      }
+
+      // "Tümü" görünümünde paylaşılan portföylerin holding'lerini de ekle (aynı asset type)
       if (portfolioId == null) {
         try {
           final sharesResponse = await _client
@@ -456,13 +490,17 @@ class SupabasePortfolioService {
             sharedIds.add(s['portfolio_id'] as String);
           }
           if (sharedIds.isNotEmpty) {
-            final sharedResponse = await _client
-                .from('portfolio')
-                .select()
-                .inFilter('portfolio_id', sharedIds.toList())
-                .order('symbol');
-            for (final e in sharedResponse as List) {
-              rows.add(PortfolioRow.fromJson(e as Map<String, dynamic>));
+            final portfoyler = await portfoyleriYukle(assetType: assetType);
+            final validSharedIds = sharedIds.intersection(portfoyler.map((p) => p.id).toSet()).toList();
+            if (validSharedIds.isNotEmpty) {
+              final sharedResponse = await _client
+                  .from('portfolio')
+                  .select()
+                  .inFilter('portfolio_id', validSharedIds)
+                  .order('symbol');
+              for (final e in sharedResponse as List) {
+                rows.add(PortfolioRow.fromJson(e as Map<String, dynamic>));
+              }
             }
           }
         } catch (_) {}
@@ -470,7 +508,7 @@ class SupabasePortfolioService {
 
       // "Tümü" görünümünde portfolio_id null olanları Ana Portföy'e ata
       if (portfolioId == null && rows.isNotEmpty) {
-        final anaId = await anaPortfoyId();
+        final anaId = await anaPortfoyId(assetType: assetType);
         if (anaId != null) {
           for (var i = 0; i < rows.length; i++) {
             if (rows[i].portfolioId == null) {
@@ -492,9 +530,8 @@ class SupabasePortfolioService {
     }
   }
 
-  /// Hisse alımı ekler - portfolio güncellenir, transaction kaydı oluşturulur.
-  /// portfolioId null ise "Ana Portföy" kullanılır.
-  /// commissionRate: binde 1 = 0.001. Komisyon maliyete dahil edilir.
+  /// Hisse/kripto alımı ekler - portfolio güncellenir, transaction kaydı oluşturulur.
+  /// portfolioId null ise "Ana Portföy" veya "Ana Kripto Portföy" kullanılır.
   static Future<void> alimEkle({
     required String symbol,
     required String name,
@@ -502,12 +539,13 @@ class SupabasePortfolioService {
     required double price,
     DateTime? islemTarihi,
     String? portfolioId,
+    String assetType = 'stock',
     double commissionRate = 0.001,
   }) async {
     final userId = _userId;
     if (userId == null) throw Exception('Kullanıcı girişi gerekli.');
 
-    final effectivePortfolioId = portfolioId ?? await anaPortfoyId();
+    final effectivePortfolioId = portfolioId ?? await anaPortfoyId(assetType: assetType);
     if (effectivePortfolioId == null) throw Exception('Portföy bulunamadı. Önce bir portföy oluşturun.');
 
     final effectiveUserId = await _portfoySahipUserId(effectivePortfolioId) ?? userId;
@@ -893,12 +931,12 @@ class SupabasePortfolioService {
   // ========== İŞLEMLER ==========
 
   /// Kullanıcının tüm işlemlerini (transactions) yükler (filtreli veya tümü).
-  /// Kendi işlemleri + paylaşılan portföylerin işlemleri dahil edilir.
-  /// startDate/endDate ile tarih aralığı filtresi uygulanır (varsayılan yok).
+  /// [assetType]: "Tümü" görünümünde sadece bu tür portföylerin işlemleri
   static Future<List<TransactionRow>> islemleriYukle({
     String? portfolioId,
     DateTime? startDate,
     DateTime? endDate,
+    String assetType = 'stock',
   }) async {
     final userId = _userId;
     if (userId == null) return [];
@@ -961,9 +999,18 @@ class SupabasePortfolioService {
         }
       }
 
-      // Tarihe göre sırala (yeniden en üstte)
-      allTransactions.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      return allTransactions;
+      // "Tümü" görünümünde asset type'a göre filtrele
+      List<TransactionRow> filtered = allTransactions;
+      if (portfolioId == null) {
+        final portfoyler = await portfoyleriYukle(assetType: assetType);
+        final validIds = portfoyler.map((p) => p.id).toSet();
+        filtered = allTransactions
+            .where((t) => t.portfolioId == null || validIds.contains(t.portfolioId))
+            .toList();
+      }
+
+      filtered.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return filtered;
     } catch (e) {
       return [];
     }
@@ -1043,7 +1090,7 @@ class SupabasePortfolioService {
       'note': note,
     }).select().single();
 
-    return StockNote.fromJson(response as Map<String, dynamic>);
+    return StockNote.fromJson(response);
   }
 
   /// Not siler
@@ -1127,7 +1174,7 @@ class SupabasePortfolioService {
         .select()
         .single();
 
-    return StockAlarm.fromJson(response as Map<String, dynamic>);
+    return StockAlarm.fromJson(response);
   }
 
   /// Alarm siler veya pasif yapar
@@ -1267,6 +1314,8 @@ class TransactionRow {
   final double price;
   final DateTime createdAt;
   final String? portfolioId;
+  /// İşlem komisyonu (TL)
+  final double? commission;
   /// Satış işleminde ortalama maliyet üzerinden kar/zarar (TL)
   final double? satisKari;
   /// Satış işleminde hisse başı kar/zarar yüzdesi
@@ -1281,6 +1330,7 @@ class TransactionRow {
     required this.price,
     required this.createdAt,
     this.portfolioId,
+    this.commission,
     this.satisKari,
     this.satisKarYuzde,
   });
@@ -1302,6 +1352,7 @@ class TransactionRow {
       price: (json['price'] as num).toDouble(),
       createdAt: DateTime.parse(json['created_at'] as String),
       portfolioId: json['portfolio_id'] as String?,
+      commission: json['commission'] != null ? (json['commission'] as num).toDouble() : null,
       satisKari: json['satis_kari'] != null ? (json['satis_kari'] as num).toDouble() : null,
       satisKarYuzde: json['satis_kar_yuzde'] != null ? (json['satis_kar_yuzde'] as num).toDouble() : null,
     );

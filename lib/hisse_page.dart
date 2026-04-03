@@ -5,18 +5,15 @@ import 'dart:async'; // Added
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_theme.dart';
 import 'hisse_detay_page.dart';
 import 'portfolio_share_info_screen.dart';
 import 'stock_logo.dart';
-import 'login_page.dart';
 import 'logo_service.dart';
 import 'supabase_portfolio_service.dart';
 import 'stock_notes_alarms.dart';
 import 'yahoo_finance_service.dart';
 import 'alarm_service.dart';
-import 'services/theme_service.dart';
 import 'widgets/app_logo.dart';
 
 class MyHomePage extends StatefulWidget {
@@ -207,6 +204,13 @@ class _MyHomePageState extends State<MyHomePage> {
     return ((_toplamParam - maliyet) / maliyet) * 100;
   }
 
+  /// Portföy kar/zarar tutarı (güncel değer - maliyet)
+  double? get _portfoyKarZararTutar {
+    final maliyet = _toplamMaliyet;
+    if (!_toplamParam.isFinite) return null;
+    return _toplamParam - maliyet;
+  }
+
   /// Seçili portföy düzenlenebilir mi (sadece kendi portföylerim düzenlenebilir)
   bool get _seciliPortfoyDuzenlenebilir {
     if (_seciliPortfoyId == null) return true;
@@ -230,20 +234,34 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
+  Widget _buildSharedIconForSelected() {
+    if (_seciliPortfoyId == null) return const SizedBox.shrink();
+    try {
+      final p = _portfoyler.firstWhere((p) => p.id == _seciliPortfoyId);
+      if (p.isShared) {
+        return Padding(
+          padding: const EdgeInsets.only(left: 6),
+          child: Icon(Icons.people_outline, size: 20, color: AppTheme.navyBlue),
+        );
+      }
+    } catch (_) {}
+    return const SizedBox.shrink();
+  }
+
   List<PortfolioRow> get _siraliListe {
     final list = List<PortfolioRow>.from(_liste);
-    double _portfoyDegeri(PortfolioRow item) {
+    double portfoyDegeri(PortfolioRow item) {
       final guncel = _portfoyGuncelFiyatlar[item.symbol];
       return guncel != null ? item.totalQuantity * guncel.fiyat : item.toplamDeger;
     }
-    double? _karZararYuzde(PortfolioRow item) {
-      final guncel = _portfoyDegeri(item);
+    double? karZararYuzde(PortfolioRow item) {
+      final guncel = portfoyDegeri(item);
       final maliyet = item.toplamDeger;
       if (maliyet <= 0) return null;
       return ((guncel - maliyet) / maliyet) * 100;
     }
-    double _karZarar(PortfolioRow item) =>
-        _portfoyDegeri(item) - item.toplamDeger;
+    double karZarar(PortfolioRow item) =>
+        portfoyDegeri(item) - item.toplamDeger;
 
     switch (_siralama) {
       case 'adet':
@@ -253,15 +271,15 @@ class _MyHomePageState extends State<MyHomePage> {
         list.sort((a, b) => b.averageCost.compareTo(a.averageCost));
         break;
       case 'deger':
-        list.sort((a, b) => _portfoyDegeri(b).compareTo(_portfoyDegeri(a)));
+        list.sort((a, b) => portfoyDegeri(b).compareTo(portfoyDegeri(a)));
         break;
       case 'kar_zarar':
-        list.sort((a, b) => _karZarar(b).compareTo(_karZarar(a)));
+        list.sort((a, b) => karZarar(b).compareTo(karZarar(a)));
         break;
       case 'kar_zarar_yuzde': {
         list.sort((a, b) {
-          final pa = _karZararYuzde(a) ?? double.negativeInfinity;
-          final pb = _karZararYuzde(b) ?? double.negativeInfinity;
+          final pa = karZararYuzde(a) ?? double.negativeInfinity;
+          final pb = karZararYuzde(b) ?? double.negativeInfinity;
           return pb.compareTo(pa);
         });
         break;
@@ -355,6 +373,37 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
+  /// Portföy listesinde sağa süpürünce "Alış" ile açılır: bu hisse için alım ekranını açar.
+  Future<void> _alisDiyaloguAc(PortfolioRow item) async {
+    setState(() {
+      _araniyor = true;
+      _aramaHataMesaji = null;
+      _arananHisse = null;
+    });
+    try {
+      final bilgi = await YahooFinanceService.hisseAra(item.symbol);
+      if (!mounted) return;
+      setState(() {
+        _arananHisse = bilgi;
+        _fiyatController.text = bilgi.fiyat.toStringAsFixed(2);
+        _adetController.clear();
+        _araniyor = false;
+      });
+    } on YahooFinanceHata catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _araniyor = false;
+        _aramaHataMesaji = e.mesaj;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _araniyor = false;
+        _aramaHataMesaji = 'Bağlantı hatası. İnternet bağlantınızı kontrol edin.';
+      });
+    }
+  }
+
   Future<void> _portfoyeEkle() async {
     final hisse = _arananHisse;
     if (hisse == null) {
@@ -383,14 +432,16 @@ class _MyHomePageState extends State<MyHomePage> {
     // "Tümü" seçiliyse hangi portföye ekleneceğini sor (veya tek portföy varsa direkt Ana Portföy)
     String? eklenecekPortfoyId = _seciliPortfoyId;
     if (eklenecekPortfoyId == null) {
-      if (_portfoyler.isEmpty) {
-        _hataGoster('Portföy bulunamadı. Önce bir portföy oluşturun.');
+      final duzenlenebilirPortfoyler = _portfoyler.where((p) => !p.isSharedWithMe).toList();
+      if (duzenlenebilirPortfoyler.isEmpty) {
+        _hataGoster('Düzenlenebilir portföy bulunamadı. Önce yeni bir portföy oluşturun.');
         return;
       }
-      final anaPortfoy = _portfoyler.where((p) => p.name == 'Ana Portföy').isEmpty
-          ? _portfoyler.first
-          : _portfoyler.firstWhere((p) => p.name == 'Ana Portföy');
-      if (_portfoyler.length == 1) {
+      final anaPortfoy = duzenlenebilirPortfoyler.where((p) => p.name == 'Ana Portföy').isEmpty
+          ? duzenlenebilirPortfoyler.first
+          : duzenlenebilirPortfoyler.firstWhere((p) => p.name == 'Ana Portföy');
+      
+      if (duzenlenebilirPortfoyler.length == 1) {
         eklenecekPortfoyId = anaPortfoy.id;
       } else {
         String? dialogSecilenId = anaPortfoy.id;
@@ -400,12 +451,12 @@ class _MyHomePageState extends State<MyHomePage> {
           builder: (context, setDialogState) => AlertDialog(
             title: const Text('Hangi portföye eklenecek?'),
             content: DropdownButtonFormField<String>(
-              value: dialogSecilenId,
+              initialValue: dialogSecilenId,
               decoration: const InputDecoration(
                 labelText: 'Portföy',
                 border: OutlineInputBorder(),
               ),
-              items: _portfoyler.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
+              items: duzenlenebilirPortfoyler.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
               onChanged: (value) {
                 if (value != null) {
                   dialogSecilenId = value;
@@ -440,7 +491,7 @@ class _MyHomePageState extends State<MyHomePage> {
         portfolioId: eklenecekPortfoyId,
         commissionRate: komisyonOrani,
       );
-      if (_komisyonVarsayilanOlsun && eklenecekPortfoyId != null) {
+      if (_komisyonVarsayilanOlsun) {
         await SupabasePortfolioService.portfoyKomisyonOranGuncelle(eklenecekPortfoyId, komisyonOrani);
         await _portfoyleriYukle();
       }
@@ -862,7 +913,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: secilenId,
+                initialValue: secilenId,
                 decoration: const InputDecoration(
                   labelText: 'Hedef portföy',
                   border: OutlineInputBorder(),
@@ -967,7 +1018,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     ).then((_) => _portfoyleriYukle());
                   },
                 ),
-                const Divider(height: 1),
+                const SizedBox(height: 16),
               ],
               if (secili.isSharedWithMe) ...[
                 ListTile(
@@ -983,7 +1034,7 @@ class _MyHomePageState extends State<MyHomePage> {
                     ).then((_) => _portfoyleriYukle());
                   },
                 ),
-                const Divider(height: 1),
+                const SizedBox(height: 16),
               ],
               if (!secili.isSharedWithMe && secili.name != 'Ana Portföy')
                 ListTile(
@@ -1234,55 +1285,6 @@ class _MyHomePageState extends State<MyHomePage> {
                               ),
                             ],
                           ),
-                          Builder(
-                            builder: (context) {
-                              final isDark = Theme.of(context).brightness == Brightness.dark;
-                              return IconButton(
-                                icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode, size: 22),
-                                tooltip: isDark ? 'Açık tema' : 'Koyu tema',
-                                onPressed: () => ThemeService.instance.toggleDarkLight(context),
-                              );
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.logout, size: 22),
-                            color: AppTheme.salmonRed,
-                            tooltip: 'Çıkış',
-                            onPressed: () async {
-                              final onay = await showDialog<bool>(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Çıkış Yap'),
-                                  content: const Text(
-                                    'Çıkış yapmak istediğinize emin misiniz?',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(ctx, false),
-                                      child: const Text('İptal'),
-                                    ),
-                                    FilledButton(
-                                      onPressed: () => Navigator.pop(ctx, true),
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor: AppTheme.softRed,
-                                      ),
-                                      child: const Text('Çıkış Yap'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              if (onay == true && context.mounted) {
-                                await Supabase.instance.client.auth.signOut();
-                                if (context.mounted) {
-                                  Navigator.of(context).pushAndRemoveUntil(
-                                    MaterialPageRoute(
-                                        builder: (context) => const LoginPage()),
-                                    (route) => false,
-                                  );
-                                }
-                              }
-                            },
-                          ),
                         ],
                       ),
                     ),
@@ -1364,17 +1366,34 @@ class _MyHomePageState extends State<MyHomePage> {
                                   ),
                                 ],
                               ),
-                              if (!_fiyatlarMaskeli && _portfoyKarZararYuzde != null) ...[
+                              if (_portfoyKarZararYuzde != null) ...[
                                 const SizedBox(height: 6),
-                                Text(
-                                  '${_portfoyKarZararYuzde! >= 0 ? '+' : ''}${_portfoyKarZararYuzde!.toStringAsFixed(2)}%',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                    color: _portfoyKarZararYuzde! >= 0
-                                        ? AppTheme.emeraldGreen
-                                        : AppTheme.softRed,
-                                  ),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _fiyatlarMaskeli ? '****%' : '${_portfoyKarZararYuzde! >= 0 ? '+' : ''}${_portfoyKarZararYuzde!.toStringAsFixed(2)}%',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: _portfoyKarZararYuzde! >= 0
+                                            ? AppTheme.emeraldGreen
+                                            : AppTheme.softRed,
+                                      ),
+                                    ),
+                                    if (_portfoyKarZararTutar != null) ...[
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        _fiyatlarMaskeli ? '(**** ${_dovizSembolu()})' : '(${_portfoyKarZararTutar! >= 0 ? '+' : ''}${_formatTutar(_dovizCevir(_portfoyKarZararTutar!))} ${_dovizSembolu()})',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 11,
+                                          color: _portfoyKarZararTutar! >= 0
+                                              ? AppTheme.emeraldGreen
+                                              : AppTheme.softRed,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ],
                             ],
@@ -1402,10 +1421,18 @@ class _MyHomePageState extends State<MyHomePage> {
                                     Icon(Icons.account_balance_wallet_rounded, color: AppTheme.navyBlue, size: 24),
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: Text(
-                                        _seciliPortfoyId == null ? 'Tüm Portföyler' : _portfoyBaslik,
-                                        style: AppTheme.h2(context),
-                                        overflow: TextOverflow.ellipsis,
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              _seciliPortfoyId == null ? 'Tüm Portföyler' : _portfoyBaslik,
+                                              style: AppTheme.h2(context),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          _buildSharedIconForSelected(),
+                                        ],
                                       ),
                                     ),
                                     Icon(
@@ -1479,9 +1506,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                     },
                                   ),
                                 ]),
-                                const SizedBox(height: 12),
-                                const Divider(height: 1),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 16),
                                 SizedBox(
                                   width: double.infinity,
                                   child: FilledButton.icon(
@@ -1505,138 +1530,166 @@ class _MyHomePageState extends State<MyHomePage> {
                           const SizedBox(height: 12),
                         ],
                         const SizedBox(height: 20),
-                        Autocomplete<HisseAramaSonucu>(
-                          key: ValueKey(_aramaKey),
-                          optionsBuilder: (editingValue) {
-                            final metin = editingValue.text.trim();
-                            if (metin.length < 2) return Future.value([]);
-                            if (!mounted) return Future.value([]);
-                            return _aramaYap(metin).then((sonuc) {
-                              if (!mounted) return <HisseAramaSonucu>[];
-                              return sonuc;
-                            }).catchError((_) {
-                              return <HisseAramaSonucu>[];
-                            });
-                          },
-                          displayStringForOption: (o) =>
-                              '${LogoService.symbolForDisplay(o.sembol)} - ${o.goruntulenecekAd}',
-                          fieldViewBuilder: (
-                            context,
-                            textEditingController,
-                            focusNode,
-                            onFieldSubmitted,
-                          ) {
-                            return TextField(
-                              controller: textEditingController,
-                              focusNode: focusNode,
-                              decoration: InputDecoration(
-                                labelText: 'Hisse ara',
-                                hintText: 'THYAO, GARAN...',
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                filled: true,
-                              ),
-                              onSubmitted: (_) => onFieldSubmitted(),
-                            );
-                          },
-                          optionsViewBuilder: (context, onSelected, options) {
-                            return Align(
-                              alignment: Alignment.topLeft,
-                              child: Material(
-                                elevation: 8,
-                                borderRadius: BorderRadius.circular(12),
-                                child: ConstrainedBox(
-                                  constraints:
-                                      const BoxConstraints(maxHeight: 240),
-                                  child: ListView.builder(
-                                    padding: EdgeInsets.zero,
-                                    shrinkWrap: true,
-                                    itemCount: options.length,
-                                    itemBuilder: (context, index) {
-                                      final opt = options.elementAt(index);
-                                      return InkWell(
-                                        onTap: () {
-                                          // Overlay kapanmadan önce callback'i çağır
-                                          if (mounted) {
-                                            onSelected(opt);
-                                          }
-                                        },
-                                        child: Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 12,
-                                          ),
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                LogoService.symbolForDisplay(opt.sembol),
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
-                                              Text(
-                                                opt.goruntulenecekAd,
-                                                style: TextStyle(
-                                                  fontSize: 13,
-                                                  color: Colors.grey[600],
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ],
-                                          ),
-                                        ),
+                        if (_seciliPortfoyDuzenlenebilir) ...[
+                          Autocomplete<HisseAramaSonucu>(
+                            key: ValueKey(_aramaKey),
+                            optionsBuilder: (editingValue) {
+                              final metin = editingValue.text.trim();
+                              if (metin.length < 2) return Future.value([]);
+                              if (!mounted) return Future.value([]);
+                              return _aramaYap(metin).then((sonuc) {
+                                if (!mounted) return <HisseAramaSonucu>[];
+                                return sonuc;
+                              }).catchError((_) {
+                                return <HisseAramaSonucu>[];
+                              });
+                            },
+                            displayStringForOption: (o) =>
+                                '${LogoService.symbolForDisplay(o.sembol)} - ${o.goruntulenecekAd}',
+                            fieldViewBuilder: (
+                              context,
+                              textEditingController,
+                              focusNode,
+                              onFieldSubmitted,
+                            ) {
+                              return TextField(
+                                controller: textEditingController,
+                                focusNode: focusNode,
+                                textCapitalization: TextCapitalization.characters,
+                                inputFormatters: [
+                                  TextInputFormatter.withFunction((old, replace) => TextEditingValue(
+                                    text: replace.text.toUpperCase(),
+                                    selection: replace.selection,
+                                  )),
+                                ],
+                                decoration: InputDecoration(
+                                  labelText: 'Hisse ara',
+                                  hintText: 'THYAO, GARAN...',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  filled: true,
+                                  prefixIcon: const Icon(Icons.search),
+                                  suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                                    valueListenable: textEditingController,
+                                    builder: (context, value, _) {
+                                      if (value.text.isEmpty) return const SizedBox.shrink();
+                                      return IconButton(
+                                        icon: const Icon(Icons.clear),
+                                        onPressed: () => textEditingController.clear(),
+                                        tooltip: 'Temizle',
                                       );
                                     },
                                   ),
                                 ),
-                              ),
-                            );
-                          },
-                          onSelected: _hisseSec,
-                        ),
-                        if (_araniyor)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 12),
-                            child: LinearProgressIndicator(),
-                          ),
-                        if (_aramaHataMesaji != null) ...[
-                          const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .errorContainer,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.warning_amber_rounded,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onErrorContainer,
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _aramaHataMesaji!,
-                                    style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onErrorContainer,
+                                onSubmitted: (_) => onFieldSubmitted(),
+                              );
+                            },
+                            optionsViewBuilder: (context, onSelected, options) {
+                              return Align(
+                                alignment: Alignment.topLeft,
+                                child: Material(
+                                  elevation: 8,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: ConstrainedBox(
+                                    constraints:
+                                        const BoxConstraints(maxHeight: 240),
+                                    child: ListView.builder(
+                                      padding: EdgeInsets.zero,
+                                      shrinkWrap: true,
+                                      itemCount: options.length,
+                                      itemBuilder: (context, index) {
+                                        final opt = options.elementAt(index);
+                                        return InkWell(
+                                          onTap: () {
+                                            // Overlay kapanmadan önce callback'i çağır
+                                            if (mounted) {
+                                              onSelected(opt);
+                                            }
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 12,
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                StockLogo(symbol: opt.sembol, size: 36),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        LogoService.symbolForDisplay(opt.sembol),
+                                                        style: const TextStyle(
+                                                          fontWeight: FontWeight.bold,
+                                                          fontSize: 16,
+                                                        ),
+                                                      ),
+                                                      Text(
+                                                        opt.goruntulenecekAd,
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          color: Colors.grey[600],
+                                                        ),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
                                   ),
                                 ),
-                              ],
-                            ),
+                              );
+                            },
+                            onSelected: _hisseSec,
                           ),
-                        ],
+                          if (_araniyor)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 12),
+                              child: LinearProgressIndicator(),
+                            ),
+                          if (_aramaHataMesaji != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .errorContainer,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.warning_amber_rounded,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onErrorContainer,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      _aramaHataMesaji!,
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onErrorContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         if (_arananHisse != null) ...[
                           const SizedBox(height: 20),
                           Container(
@@ -1856,7 +1909,8 @@ class _MyHomePageState extends State<MyHomePage> {
                             ),
                           ),
                         ],
-                        const SizedBox(height: 28),
+                      ],
+                      const SizedBox(height: 28),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -1901,6 +1955,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                   final karZararYuzde = (guncelDeger != null && maliyet > 0)
                                       ? ((guncelDeger - maliyet) / maliyet) * 100
                                       : null;
+                                  final karZararTutar = guncelDeger != null ? guncelDeger - maliyet : null;
                                   final karda = karZararYuzde != null && karZararYuzde >= 0;
                                   final hedefCuzdanlar = _portfoyler
                                       .where((p) => p.id != _seciliPortfoyId)
@@ -1919,6 +1974,22 @@ class _MyHomePageState extends State<MyHomePage> {
                                     child: aksiyonlarVar
                                         ? Slidable(
                                             key: Key('${item.symbol}-${entry.key}'),
+                                            startActionPane: ActionPane(
+                                              motion: const StretchMotion(),
+                                              extentRatio: 0.25,
+                                              children: [
+                                                SlidableAction(
+                                                  onPressed: (ctx) {
+                                                    Slidable.of(ctx)?.close();
+                                                    _alisDiyaloguAc(item);
+                                                  },
+                                                  backgroundColor: AppTheme.emeraldGreen,
+                                                  foregroundColor: Colors.white,
+                                                  icon: Icons.add_chart,
+                                                  label: 'Alış',
+                                                ),
+                                              ],
+                                            ),
                                             endActionPane: ActionPane(
                                               motion: const StretchMotion(),
                                               extentRatio: tasimaGoster ? 0.5 : 0.25,
@@ -1930,7 +2001,6 @@ class _MyHomePageState extends State<MyHomePage> {
                                               backgroundColor: AppTheme.navyBlue,
                                               foregroundColor: Colors.white,
                                               icon: Icons.drive_file_move_rounded,
-                                              label: 'Taşı',
                                             ),
                                           SlidableAction(
                                             onPressed: (ctx) {
@@ -1948,9 +2018,16 @@ class _MyHomePageState extends State<MyHomePage> {
                                         item: item,
                                         guncelDeger: guncelDeger,
                                         karZararYuzde: karZararYuzde,
+                                        karZararTutar: karZararTutar,
                                         karda: karda,
                                         hasNote: _notuOlanSemboller.contains(item.symbol),
                                         portfoyAdi: portfoyAdi,
+                                        isPortfoyShared: item.portfolioId != null
+                                            ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.isShared ?? false
+                                            : false,
+                                        ownerEmailHint: item.portfolioId != null
+                                            ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.ownerEmailHint
+                                            : null,
                                         degisimYuzde: guncelBilgi?.degisimYuzde, // Added
                                         formatTutar: (v) => _fiyatlarMaskeli ? '****' : _formatTutar(v),
                                         dovizCevir: _dovizCevir,
@@ -1967,6 +2044,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                                 eurKuru: _eurKuru,
                                                 readOnly: !_seciliPortfoyDuzenlenebilir,
                                                 portfoyAdi: portfoyAdi,
+                                                isMasked: _fiyatlarMaskeli,
                                               ),
                                             ),
                                           ).then((_) => _portfoyYukle());
@@ -1978,11 +2056,15 @@ class _MyHomePageState extends State<MyHomePage> {
                                             item: item,
                                             guncelDeger: guncelDeger,
                                             karZararYuzde: karZararYuzde,
+                                            karZararTutar: karZararTutar,
                                             karda: karda,
                                             hasNote: _notuOlanSemboller.contains(item.symbol),
                                             portfoyAdi: item.portfolioId != null
                                                 ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.name
                                                 : null,
+                                            isPortfoyShared: item.portfolioId != null
+                                                ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.isShared ?? false
+                                                : false,
                                             degisimYuzde: guncelBilgi?.degisimYuzde, // Added
                                             formatTutar: (v) => _fiyatlarMaskeli ? '****' : _formatTutar(v),
                                             dovizCevir: _dovizCevir,
@@ -2002,6 +2084,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                                 eurKuru: _eurKuru,
                                                 readOnly: !_seciliPortfoyDuzenlenebilir,
                                                 portfoyAdi: portfoyAdi,
+                                                isMasked: _fiyatlarMaskeli,
                                               ),
                                             ),
                                               ).then((_) => _portfoyYukle());
@@ -2187,9 +2270,12 @@ class _HisseKarti extends StatefulWidget {
   /// Güncel piyasa değeri (adet × güncel fiyat). Yoksa kart maliyet (toplamDeger) gösterir.
   final double? guncelDeger;
   final double? karZararYuzde;
+  final double? karZararTutar;
   final bool karda;
   final bool hasNote;
   final String? portfoyAdi;
+  final bool isPortfoyShared;
+  final String? ownerEmailHint;
   final double? degisimYuzde; // Added
   final String Function(double) formatTutar;
   final double Function(double) dovizCevir;
@@ -2203,9 +2289,12 @@ class _HisseKarti extends StatefulWidget {
     required this.item,
     this.guncelDeger,
     required this.karZararYuzde,
+    this.karZararTutar,
     required this.karda,
     this.hasNote = false,
     this.portfoyAdi,
+    this.isPortfoyShared = false,
+    this.ownerEmailHint,
     this.degisimYuzde, // Added
     required this.formatTutar,
     required this.dovizCevir,
@@ -2375,14 +2464,35 @@ class _HisseKartiState extends State<_HisseKarti> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (widget.portfoyAdi != null && widget.portfoyAdi!.isNotEmpty) ...[
-                            Text(
-                              widget.portfoyAdi!,
-                              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                fontSize: 9,
-                                color: Colors.grey.shade500,
-                              ) ?? TextStyle(fontSize: 9, color: Colors.grey.shade500),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    widget.portfoyAdi!,
+                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                      fontSize: 9,
+                                      color: Colors.grey.shade500,
+                                    ) ?? TextStyle(fontSize: 9, color: Colors.grey.shade500),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (widget.isPortfoyShared) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.people_outline, size: 10, color: Colors.grey[500]),
+                                  if (widget.ownerEmailHint != null && widget.ownerEmailHint!.isNotEmpty) ...[
+                                    const SizedBox(width: 2),
+                                    Text(
+                                      '(@${widget.ownerEmailHint})',
+                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                        fontSize: 8,
+                                        color: Colors.grey.shade500,
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ],
                             ),
                             const SizedBox(height: 2),
                           ],
@@ -2417,7 +2527,7 @@ class _HisseKartiState extends State<_HisseKarti> {
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              '${widget.item.totalQuantity.toStringAsFixed(0)} adet × ${widget.formatTutar(widget.dovizCevir(widget.item.averageCost))} ${widget.dovizSembolu()}',
+                              '${widget.formatTutar(widget.item.totalQuantity).contains('****') ? '****' : widget.item.totalQuantity.toStringAsFixed(0)} adet × ${widget.formatTutar(widget.dovizCevir(widget.item.averageCost))} ${widget.dovizSembolu()}',
                               style: AppTheme.bodySmall(context),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -2468,28 +2578,37 @@ class _HisseKartiState extends State<_HisseKarti> {
                             ],
                           ),
                           if (widget.karZararYuzde != null) ...[
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 4),
                             FittedBox(
                               fit: BoxFit.scaleDown,
                               alignment: Alignment.centerRight,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.chipBgGreen(widget.karda),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  widget.karZararYuzde != null
-                                      ? '${widget.karZararYuzde! >= 0 ? '+' : ''}${widget.karZararYuzde!.toStringAsFixed(1)}%'
-                                      : '—',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppTheme.chipGreen(widget.karda),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    widget.karZararYuzde != null
+                                        ? (widget.formatTutar(widget.karZararYuzde!).contains('****')
+                                            ? '****%'
+                                            : '${widget.karZararYuzde! >= 0 ? '+' : ''}${widget.karZararYuzde!.toStringAsFixed(1)}%')
+                                        : '—',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppTheme.chipGreen(widget.karda),
+                                    ),
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                  if (widget.karZararTutar != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${widget.karZararTutar! >= 0 ? '+' : ''}${widget.formatTutar(widget.dovizCevir(widget.karZararTutar!))} ${widget.dovizSembolu()}',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 10,
+                                        color: AppTheme.chipGreen(widget.karda),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ],

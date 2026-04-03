@@ -5,6 +5,7 @@ import 'app_theme.dart';
 import 'logo_service.dart';
 import 'services/time_tunnel_service.dart';
 import 'stock_logo.dart';
+import 'supabase_portfolio_service.dart';
 
 /// Zaman Tüneli — Geçmiş bir tarihteki portföy durumunu gösterir
 class TimeTunnelScreen extends StatefulWidget {
@@ -19,11 +20,32 @@ class _TimeTunnelScreenState extends State<TimeTunnelScreen> {
   TimeTunnelSonuc? _sonuc;
   bool _yukleniyor = false;
   String? _hata;
+  List<Portfolio> _portfoyler = [];
+  String? _seciliPortfoyId;
 
   @override
   void initState() {
     super.initState();
-    _hesapla();
+    _portfoyleriYukle();
+    // Artık ilk hesaplamayı _portfoyleriYukle içinde, portföy seçilince yapıyoruz
+  }
+
+  Future<void> _portfoyleriYukle() async {
+    try {
+      final list = await SupabasePortfolioService.portfoyleriYukle();
+      if (mounted) {
+        setState(() {
+          _portfoyler = list;
+          // Eğer seçili portföy yoksa veya listede değilse (ve liste boş değilse) ilkini seç
+          if (_seciliPortfoyId == null || !list.any((p) => p.id == _seciliPortfoyId)) {
+            if (list.isNotEmpty) {
+              _seciliPortfoyId = list.first.id;
+              _hesapla(); // İlk portföy seçilince tekrar hesapla
+            }
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _hesapla() async {
@@ -32,7 +54,7 @@ class _TimeTunnelScreenState extends State<TimeTunnelScreen> {
       _hata = null;
     });
     try {
-      final sonuc = await TimeTunnelService.hesapla(_seciliTarih);
+      final sonuc = await TimeTunnelService.hesapla(_seciliTarih, portfolioId: _seciliPortfoyId);
       if (mounted) {
         setState(() {
           _sonuc = sonuc;
@@ -155,15 +177,72 @@ class _TimeTunnelScreenState extends State<TimeTunnelScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Tarih Seç',
-            style: AppTheme.h2(context),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Filtrele',
+                style: AppTheme.h2(context),
+              ),
+              if (_sonuc != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'BIST100: ${_formatTutar(_sonuc!.bist100)}',
+                      style: GoogleFonts.inter(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                    ),
+                    Text(
+                      'USD: ${_formatTutar(_sonuc!.usdKuru)} ₺  |  EUR: ${_formatTutar(_sonuc!.eurKuru)} ₺',
+                      style: GoogleFonts.inter(fontSize: 10, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<String>(
+            value: _seciliPortfoyId,
+            decoration: InputDecoration(
+              labelText: 'Portföy',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+            items: _portfoyler.map((p) => DropdownMenuItem(
+                  value: p.id,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(child: Text(p.name, overflow: TextOverflow.ellipsis)),
+                      if (p.isShared) ...[
+                        const SizedBox(width: 6),
+                        Icon(Icons.people_outline, size: 16, color: Colors.grey[600]),
+                        if (p.isSharedWithMe && p.ownerEmailHint != null) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            '(@${p.ownerEmailHint})',
+                            style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
+                )).toList(),
+            onChanged: (v) {
+              setState(() => _seciliPortfoyId = v);
+              _hesapla();
+            },
           ),
           const SizedBox(height: 16),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              _TarihChip(
+                label: 'Geçen Hafta',
+                secili: _tarihKarsilastir(_seciliTarih, DateTime.now().subtract(const Duration(days: 7))),
+                onTap: () => _hizliTarihSec(7),
+              ),
               _TarihChip(
                 label: '1 Ay Öncesi',
                 secili: _tarihKarsilastir(_seciliTarih, DateTime.now().subtract(const Duration(days: 30))),
@@ -258,8 +337,6 @@ class _TimeTunnelScreenState extends State<TimeTunnelScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Divider(color: Colors.white.withValues(alpha: 0.3), height: 1),
-          const SizedBox(height: 12),
           if (s.usdKuru > 0)
             Text(
               '\$ ${_formatTutar(s.toplamUsd)}  ·  € ${_formatTutar(s.toplamEur)}',

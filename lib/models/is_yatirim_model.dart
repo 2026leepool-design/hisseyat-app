@@ -26,3 +26,43 @@ class IsYatirimModel {
       netKar != null ||
       temettuVerimi != null;
 }
+
+/// İş Yatırım şirket kartından çekilen şirket profili (künye + faaliyet alanı).
+/// CompanyProfile: CEO, Kuruluş, Sektör, Web Sitesi, Halka Arz, Ödenmiş Sermaye, Fiili Dolaşım.
+class IsYatirimCompanyProfile {
+  final String? sirketUnvani;
+  final String? kurulusTarihi;
+  final String? genelMudur;
+  final String? sektor;
+  final String? webSitesi;
+  final String? halkaArzTarihi;
+  final String? odenmisSermaye;
+  final String? fiiliDolasimOrani;
+  final double? fiiliDolasimOraniYuzde;
+  final String? sirketHakkinda;
+
+  const IsYatirimCompanyProfile({
+    this.sirketUnvani,
+    this.kurulusTarihi,
+    this.genelMudur,
+    this.sektor,
+    this.webSitesi,
+    this.halkaArzTarihi,
+    this.odenmisSermaye,
+    this.fiiliDolasimOrani,
+    this.fiiliDolasimOraniYuzde,
+    this.sirketHakkinda,
+  });
+
+  bool get hasData =>
+      sirketUnvani != null ||
+      kurulusTarihi != null ||
+      genelMudur != null ||
+      sektor != null ||
+      webSitesi != null ||
+      halkaArzTarihi != null ||
+      odenmisSermaye != null ||
+      fiiliDolasimOrani != null ||
+      fiiliDolasimOraniYuzde != null ||
+      (sirketHakkinda != null && sirketHakkinda!.trim().isNotEmpty);
+}

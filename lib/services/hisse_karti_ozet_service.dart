@@ -11,6 +11,9 @@ const defaultMetrikler = [
   'toplam_maliyet',
   'hisse_basi_maliyet',
   'anlik_fiyat',
+  'dun_kapanis',
+  'gunluk_yuksek',
+  'gunluk_dusuk',
 ];
 
 /// Tüm seçilebilir metrikler: id -> görünen ad

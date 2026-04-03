@@ -20,8 +20,7 @@ const defaultFinansalOzetMetrikler = [
 ];
 
 /// Tüm seçilebilir metrikler: id -> görünen ad
-/// Yahoo meta: onceki_kapanis, hacim, gunluk_yuksek_dusuk, 52_haftalik_aralik
-/// İş Yatırım: son_fiyat, gunluk_degisim, f_k, pd_dd, piyasa_degeri, net_kar, temettu_verimi
+/// Temel metrikler varsayılanda açık; ileri düzey metrikler (beta, ROE, cari oran vb.) varsayılanda kapalı.
 const tumFinansalOzetMetrikler = {
   'onceki_kapanis': 'Önceki Kapanış',
   'hacim': 'Hacim',
@@ -34,6 +33,15 @@ const tumFinansalOzetMetrikler = {
   'piyasa_degeri': 'Piyasa Değeri',
   'net_kar': 'Net Kâr (Son Dönem)',
   'temettu_verimi': 'Temettü Verimi',
+  // İleri düzey (Yahoo); varsayılan kapalı
+  'beta': 'Beta (Risk)',
+  'roe': 'ROE (Özvarlık Kârlılığı %)',
+  'cari_oran': 'Cari Oran (Likidite)',
+  'borc_ozkaynak': 'Borç/Özkaynak',
+  'analist_hedef_fiyat': 'Analist Hedef Fiyatı',
+  'ortalama_50_gun': '50 Günlük Ortalama',
+  'ortalama_200_gun': '200 Günlük Ortalama',
+  'peg_oran': 'PEG Oranı',
 };
 
 /// Finansal Özet metrik tercihlerini SharedPreferences'ta saklar

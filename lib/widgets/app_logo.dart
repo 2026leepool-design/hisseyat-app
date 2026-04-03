@@ -21,7 +21,11 @@ class AppLogo extends StatelessWidget {
       child: Image.asset(
         _assetPath,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Icon(Icons.show_chart, size: size * 0.7, color: Colors.white70),
+        errorBuilder: (_, __, ___) => Icon(
+          Icons.show_chart, 
+          size: size * 0.7, 
+          color: forDarkBackground ? Colors.white70 : const Color(0xFF356B6B), // Smoky Jade
+        ),
       ),
     );
   }

@@ -6,16 +6,18 @@ import 'app_theme.dart';
 import 'app_shell.dart';
 import 'login_page.dart';
 import 'release_notes_page.dart';
-import 'widgets/app_logo.dart';
 
-// Uygulama ile uyumlu Charcoal & Smoky Jade paleti
-const _splashBgDark = Color(0xFF111827);
-const _splashSurface = Color(0xFF1F2937);
-const _splashJade = Color(0xFF356B6B);
-const _splashTeal = Color(0xFF3A6D7E);
-const _splashAccent = Color(0xFFA3BFFA);
+// Animasyon için canlı renk paleti
+const List<Color> _ballColors = [
+  Color(0xFF356B6B), // Jade
+  Color(0xFFFFD700), // Gold
+  Color(0xFFE57373), // Red
+  Color(0xFF4CAF50), // Green
+  Color(0xFF64B5F6), // Blue
+  Color(0xFFBA68C8), // Purple
+  Color(0xFFFFB74D), // Orange
+];
 
-/// Uygulama açılış sayfası: retro logo, komplike yükleniyor animasyonu, ~5 sn sonra login/home
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
 
@@ -27,61 +29,88 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   late AnimationController _logoController;
   late Animation<double> _logoScale;
   late Animation<double> _logoOpacity;
-  late AnimationController _progressController;
-  late List<AnimationController> _dotControllers;
-  static const _dotCount = 5;
+  
+  late AnimationController _textController;
+  late Animation<double> _textOpacity;
+  late Animation<Offset> _textSlide;
+
+  late List<AnimationController> _ballControllers;
+  static const _ballCount = 7; // Top sayısı
 
   @override
   void initState() {
     super.initState();
 
+    // Logo Animasyonları
     _logoController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1500),
     );
-    _logoScale = Tween<double>(begin: 0.3, end: 1.0).animate(
+    _logoScale = Tween<double>(begin: 0.5, end: 1.0).animate(
       CurvedAnimation(parent: _logoController, curve: Curves.elasticOut),
     );
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _logoController, curve: Curves.easeOut),
     );
 
-    _progressController = AnimationController(
+    // Metin Animasyonları
+    _textController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 5),
-    )..forward();
+      duration: const Duration(milliseconds: 1000),
+    );
+    _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _textController, curve: Curves.easeIn),
+    );
+    _textSlide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero).animate(
+      CurvedAnimation(parent: _textController, curve: Curves.easeOutQuart),
+    );
 
-    _dotControllers = List.generate(
-      _dotCount,
+    // Top Animasyonları
+    _ballControllers = List.generate(
+      _ballCount,
       (i) => AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 450),
+        duration: Duration(milliseconds: 600 + (i * 100)), // Her top farklı hızda
       ),
     );
-    _startDotWave();
+    _startBallBouncing();
 
-    _logoController.forward();
+    // Sıralı Başlatma
+    _logoController.forward().then((_) {
+      _textController.forward();
+    });
 
-    Future.delayed(const Duration(seconds: 5), () async {
+    // Yönlendirme
+    Future.delayed(const Duration(seconds: 4), () async {
       if (!mounted) return;
-      final showNotes = await shouldShowReleaseNotes();
-      if (!mounted) return;
+      
+      // İlk açılış kontrolü veya login durumu
       final isLoggedIn = Supabase.instance.client.auth.currentUser != null;
+      final showNotes = await shouldShowReleaseNotes();
+      
+      if (!mounted) return;
+      
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (context) => showNotes
-              ? const ReleaseNotesPage()
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => 
+            showNotes 
+              ? const ReleaseNotesPage() 
               : (isLoggedIn ? const AppShell() : const LoginPage()),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+          transitionDuration: const Duration(milliseconds: 800),
         ),
       );
     });
   }
 
-  void _startDotWave() {
-    for (var i = 0; i < _dotCount; i++) {
-      Future.delayed(Duration(milliseconds: 150 * i), () {
+  void _startBallBouncing() {
+    for (var i = 0; i < _ballCount; i++) {
+      // Rastgele gecikmelerle başlat
+      Future.delayed(Duration(milliseconds: i * 150), () {
         if (!mounted) return;
-        _dotControllers[i].repeat(reverse: true);
+        _ballControllers[i].repeat(reverse: true);
       });
     }
   }
@@ -89,8 +118,8 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _logoController.dispose();
-    _progressController.dispose();
-    for (final c in _dotControllers) {
+    _textController.dispose();
+    for (final c in _ballControllers) {
       c.dispose();
     }
     super.dispose();
@@ -99,27 +128,17 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
+      backgroundColor: Colors.white, // BEYAZ ARKA PLAN
+      body: SizedBox(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              _splashBgDark,
-              _splashSurface,
-              _splashJade,
-              _splashTeal,
-            ],
-            stops: [0.0, 0.35, 0.7, 1.0],
-          ),
-        ),
         child: SafeArea(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Spacer(flex: 2),
+              const Spacer(flex: 3),
+              
+              // --- LOGO ---
               AnimatedBuilder(
                 animation: _logoController,
                 builder: (context, child) {
@@ -128,87 +147,125 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
                     child: Transform.scale(
                       scale: _logoScale.value,
                       child: Container(
-                        padding: const EdgeInsets.all(20),
+                        width: 160,
+                        height: 160,
+                        padding: const EdgeInsets.all(24),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(24),
+                          color: Colors.white,
+                          shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: _splashJade.withValues(alpha: 0.3),
-                              blurRadius: 24,
-                              spreadRadius: 2,
+                              color: AppTheme.smokyJade.withOpacity(0.15),
+                              blurRadius: 40,
+                              spreadRadius: 5,
+                            ),
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 5),
+                            ),
+                          ],
+                          border: Border.all(
+                            color: AppTheme.smokyJade.withOpacity(0.1),
+                            width: 1,
+                          ),
+                        ),
+                        child: Image.asset(
+                          'assets/icon/app_logo.png',
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) {
+                            return const Icon(
+                              Icons.candlestick_chart_rounded,
+                              size: 80,
+                              color: AppTheme.smokyJade,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+              
+              const SizedBox(height: 40),
+              
+              // --- APP NAME & SLOGAN ---
+              SlideTransition(
+                position: _textSlide,
+                child: FadeTransition(
+                  opacity: _textOpacity,
+                  child: Column(
+                    children: [
+                      Text(
+                        'Hisseyat',
+                        style: GoogleFonts.outfit(
+                          fontSize: 42,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.smokyJade, // KOYU RENK
+                          letterSpacing: 1.5,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
                             ),
                           ],
                         ),
-                        child: AppLogo(size: 120, forDarkBackground: true),
                       ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 28),
-              AnimatedBuilder(
-                animation: _logoController,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _logoOpacity.value,
-                    child: Text(
-                      'StockTrack Pro',
-                      style: GoogleFonts.inter(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                        shadows: [
-                          Shadow(
-                            color: _splashJade.withValues(alpha: 0.5),
-                            blurRadius: 12,
-                            offset: const Offset(0, 2),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.smokyJade.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Manage your Stock&Crypto with Hisseyat',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: AppTheme.smokyJade.withOpacity(0.8), // KOYU RENK
+                            letterSpacing: 0.5,
                           ),
-                        ],
+                        ),
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-              AnimatedBuilder(
-                animation: _logoController,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _logoOpacity.value,
-                    child: Text(
-                      'Portföyünüz şaha kalkıyor! 📈',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.white.withValues(alpha: 0.85),
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const Spacer(flex: 2),
-              Column(
-                children: [
-                  _LoadingAnimation(
-                    progressController: _progressController,
-                    dotControllers: _dotControllers,
+                    ],
                   ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'Uygulama yükleniyor...',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      color: Colors.white.withValues(alpha: 0.7),
-                      letterSpacing: 1,
-                    ),
-                  ),
-                ],
+                ),
               ),
+              
               const Spacer(flex: 2),
+              
+              // --- FUN BOUNCING BALLS ANIMATION ---
+              SizedBox(
+                height: 100,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: List.generate(_ballCount, (index) {
+                    return _BouncingBall(
+                      controller: _ballControllers[index],
+                      color: _ballColors[index % _ballColors.length],
+                      delay: index,
+                    );
+                  }),
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              
+              // Loading Text
+              Text(
+                'Yükleniyor...',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  color: AppTheme.smokyJade.withOpacity(0.6), // KOYU RENK
+                  letterSpacing: 2,
+                ),
+              ),
+              
+              const Spacer(flex: 1),
             ],
           ),
         ),
@@ -217,112 +274,56 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
   }
 }
 
-/// Dalga halinde zıplayan noktalar + 5 sn dolan ilerleme çubuğu
-class _LoadingAnimation extends StatelessWidget {
-  final AnimationController progressController;
-  final List<AnimationController> dotControllers;
+class _BouncingBall extends StatelessWidget {
+  final AnimationController controller;
+  final Color color;
+  final int delay;
 
-  const _LoadingAnimation({
-    required this.progressController,
-    required this.dotControllers,
+  const _BouncingBall({
+    required this.controller,
+    required this.color,
+    required this.delay,
   });
-
-  static const _dotColors = [
-    _splashJade,
-    _splashTeal,
-    _splashAccent,
-    AppTheme.success,
-    _splashJade,
-  ];
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            _SplashPageState._dotCount,
-            (i) => AnimatedBuilder(
-              animation: dotControllers[i],
-              builder: (context, child) {
-                final t = dotControllers[i].value;
-                final bounce = 8 * math.sin(t * math.pi);
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  transform: Matrix4.translationValues(0, -bounce, 0),
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: _dotColors[i],
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: _dotColors[i].withValues(alpha: 0.6),
-                          blurRadius: 8,
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, child) {
+        // Sinüs dalgası hareketi + Sıçrama efekti
+        final t = controller.value;
+        final bounceHeight = 30.0 + (delay % 2 * 15.0); // Farklı yükseklikler
+        final val = math.sin(t * math.pi); // 0 -> 1 -> 0
+        final translateY = -val * bounceHeight;
+        
+        // Zıplarken hafifçe ezilme efekti (scale)
+        final scaleX = 1.0 + (val < 0.1 ? 0.2 : 0.0); // Yere değdiğinde genişle
+        final scaleY = 1.0 - (val < 0.1 ? 0.2 : 0.0); // Yere değdiğinde basıklaş
+
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          transform: Matrix4.translationValues(0, translateY, 0),
+          child: Transform.scale(
+            scaleX: scaleX,
+            scaleY: scaleY,
+            child: Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withOpacity(0.4),
+                    blurRadius: 10 + (val * 5),
+                    spreadRadius: 1,
                   ),
-                );
-              },
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: 200,
-          height: 6,
-          child: AnimatedBuilder(
-            animation: progressController,
-            builder: (context, child) {
-              return CustomPaint(
-                painter: _LoadingBarPainter(progressController.value),
-                size: const Size(200, 6),
-              );
-            },
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
-}
-
-class _LoadingBarPainter extends CustomPainter {
-  final double progress;
-
-  _LoadingBarPainter(this.progress);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rrect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      const Radius.circular(3),
-    );
-    canvas.drawRRect(
-      rrect,
-      Paint()..color = Colors.white.withValues(alpha: 0.2),
-    );
-    final fillWidth = size.width * progress.clamp(0.0, 1.0);
-    if (fillWidth > 0) {
-      final fillRrect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, fillWidth, size.height),
-        const Radius.circular(3),
-      );
-      canvas.drawRRect(
-        fillRrect,
-        Paint()
-          ..shader = const LinearGradient(
-            colors: [_splashJade, _splashTeal],
-            stops: [0.0, 1.0],
-          ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LoadingBarPainter oldDelegate) =>
-      oldDelegate.progress != progress;
 }

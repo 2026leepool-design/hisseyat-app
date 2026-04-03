@@ -1,3 +1,4 @@
+import 'services/fcm_service.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'hisse_page.dart';
@@ -16,6 +17,14 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    @override
+  void initState() {
+    super.initState();
+    // Bildirim izinlerini iste ve token'ı al
+    FcmService.init(); 
+    
+    _waitAndNavigate();
+  }
     // Sayfa açılır açılmaz zamanlayıcıyı başlatıyoruz
     _waitAndNavigate();
   }

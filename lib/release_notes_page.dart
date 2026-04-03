@@ -6,7 +6,7 @@ import 'app_theme.dart';
 import 'app_shell.dart';
 import 'login_page.dart';
 
-const _keyDontShowReleaseNotes = 'release_notes_dont_show_v4_1';
+const _keyDontShowReleaseNotes = 'release_notes_dont_show_v5_2';
 
 Future<bool> shouldShowReleaseNotes() async {
   final prefs = await SharedPreferences.getInstance();
@@ -62,7 +62,7 @@ class _ReleaseNotesPageState extends State<ReleaseNotesPage> {
               ),
               const SizedBox(height: 8),
               Text(
-                'v4.1 — Son güncellemede neler değişti?',
+                'v5.2 — Son güncellemede neler değişti?',
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   color: Colors.grey.shade600,
@@ -74,23 +74,24 @@ class _ReleaseNotesPageState extends State<ReleaseNotesPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildSection('Ekran Düzeni & Taşma Düzeltmeleri', [
-                        '• Performans sayfasında tarih aralığı alanları taşma düzeltildi',
-                        '• Alt navigasyon (Ana Sayfa, Geçmiş, Zaman Tüneli, Performans, Portföyler) dar ekranda taşmıyor',
-                        '• Uygulama açılışı her zaman dikey (portrait); sadece Geçmiş İşlemler ekranı yatay (landscape)',
+                      _buildSection('Şirket profili (hisse detay)', [
+                        '• Hisse detay sayfasında "Şirket Profili" bölümü yenilendi: Hakkında, Bilgiler, Finansal Özet ve Künye',
+                        '• Yahoo Finance: Company Overview (longBusinessSummary), Sektör, Beta, F/K, EPS, Temettü Verimi, Piyasa Değeri artık doğru endpoint (quoteSummary) ile çekiliyor',
+                        '• BIST hisseleri için İş Yatırım web sitesinden şirket kartı verileri (Genel Müdür, Kuruluş Tarihi, Web Sitesi, Ödenmiş Sermaye, Fiili Dolaşım vb.) taranıyor',
+                        '• Veri yoksa "-" veya "Bilinmiyor" gösteriliyor; uygulama çökmeden devam ediyor',
                       ]),
-                      _buildSection('Portföy Bilgisi', [
-                        '• Hisse kartlarında hangi portföye ait olduğu, hisse kodunun hemen üstünde küçük fontla gösteriliyor',
-                        '• Hisse detay sayfasında da aynı portföy adı bilgisi eklendi',
+                      _buildSection('Yahoo Finance servisi', [
+                        '• quoteSummary adresi güncellendi: assetProfile, summaryDetail, defaultKeyStatistics, financialData modülleri kullanılıyor',
+                        '• Sembol .IS ile gönderiliyor (örn. SNICA.IS); Beta, Piyasa Değeri, F/K, EPS, Temettü için formatlı (.fmt) değerler destekleniyor',
                       ]),
-                      _buildSection('Fiyat Grafiği (Hisse Bilgi Ekranı)', [
-                        '• Grafik üstte, finansal özet altta; sayfa aşağı kaydırılınca grafik de birlikte kayıyor',
-                        '• Tooltip: Tarih (yyyy-MM-dd), Açılış, Kapanış, Düşük, Yüksek, Değişim % formatında gösteriliyor',
+                      _buildSection('Profil arayüzü', [
+                        '• En üstte "Hakkında" ile şirket açıklaması; uzunsa "Devamını Oku" ile genişletilebiliyor',
+                        '• Bilgiler tablosu: Sektör, Endüstri, Çalışan Sayısı, Web Sitesi (tıklanınca açılıyor)',
+                        '• Finansal Özet: Beta, F/K, EPS, Temettü Verimi, Piyasa Değeri',
+                        '• Künye: CEO, Kuruluş, Halka Arz Tarihi, Ödenmiş Sermaye, Fiili Dolaşım (İş Yatırım + Yahoo birleşik)',
                       ]),
-                      _buildSection('Alarmlar', [
-                        '• Alarm kurma sırasında oluşan hata giderildi',
-                        '• Alarm kurarken bildirim izni isteniyor; gerekli yetkiler uygulama açılışında ve alarm kurulurken talep ediliyor',
-                        '• Uygulama kapalıyken bile 15 dakikada bir fiyat kontrolü yapılıyor; tetiklenen alarmlar bildirimle gösteriliyor',
+                      _buildSection('Hata düzeltmeleri', [
+                        '• Profil sekmesinde nullable alan erişim hatası giderildi (fiiliDolasimOraniYuzde)',
                       ]),
                     ],
                   ),

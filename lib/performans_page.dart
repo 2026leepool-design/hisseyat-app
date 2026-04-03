@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'app_theme.dart';
 import 'logo_service.dart';
+import 'performans_hesaplama_info_page.dart';
 import 'services/historical_price_service.dart';
 import 'services/time_tunnel_service.dart';
 import 'stock_logo.dart';
@@ -42,7 +43,18 @@ class _PerformansPageState extends State<PerformansPage> {
   Future<void> _portfoyleriYukle() async {
     try {
       final list = await SupabasePortfolioService.portfoyleriYukle();
-      if (mounted) setState(() => _portfoyler = list);
+      if (mounted) {
+        setState(() {
+          _portfoyler = list;
+          // Eğer seçili portföy yoksa veya listede değilse (ve liste boş değilse) ilkini seç
+          if (_seciliPortfoyId == null || !list.any((p) => p.id == _seciliPortfoyId)) {
+            if (list.isNotEmpty) {
+              _seciliPortfoyId = list.first.id;
+              _hesapla(); // İlk portföy seçilince tekrar hesapla
+            }
+          }
+        });
+      }
     } catch (_) {}
   }
 
@@ -70,18 +82,40 @@ class _PerformansPageState extends State<PerformansPage> {
   }
 
   Future<void> _portfoyPerformansiHesapla() async {
-    // Başlangıç tarihindeki portföy adetleri
-    final baslangicAdetler = await TimeTunnelService.portfoyAdetleriHesapla(
+    if (_seciliPortfoyId == null) {
+      if (mounted) {
+        setState(() {
+          _baslangicDeger = 0;
+          _bitisDeger = 0;
+        });
+      }
+      return;
+    }
+
+    final baslangicAdetlerDetayli = await TimeTunnelService.portfoyAdetleriHesaplaDetayli(
       _baslangicTarihi,
       portfolioId: _seciliPortfoyId,
     );
-    // Bitiş tarihindeki portföy adetleri
-    final bitisAdetler = await TimeTunnelService.portfoyAdetleriHesapla(
+    final bitisAdetlerDetayli = await TimeTunnelService.portfoyAdetleriHesaplaDetayli(
       _bitisTarihi,
       portfolioId: _seciliPortfoyId,
     );
+    final islemler = await SupabasePortfolioService.islemleriYukle(
+      portfolioId: _seciliPortfoyId,
+      startDate: _baslangicTarihi,
+      endDate: _bitisTarihi,
+    );
 
-    final semboller = {...baslangicAdetler.keys, ...bitisAdetler.keys}.toList();
+    final baslangicGun = DateTime(_baslangicTarihi.year, _baslangicTarihi.month, _baslangicTarihi.day);
+    final bitisGun = DateTime(_bitisTarihi.year, _bitisTarihi.month, _bitisTarihi.day);
+    final aralikIslemleri = islemler.where((t) {
+      final tGun = DateTime(t.createdAt.year, t.createdAt.month, t.createdAt.day);
+      return tGun.isAfter(baslangicGun) && !tGun.isAfter(bitisGun);
+    }).toList();
+
+    final islemSembolleri = aralikIslemleri.map((e) => e.symbol).toSet();
+    final semboller = {...baslangicAdetlerDetayli.keys, ...bitisAdetlerDetayli.keys, ...islemSembolleri}.toList();
+
     if (semboller.isEmpty) {
       if (mounted) {
         setState(() {
@@ -94,48 +128,109 @@ class _PerformansPageState extends State<PerformansPage> {
 
     final baslangicFiyatlar = await HistoricalPriceService.getClosePricesBatched(semboller, _baslangicTarihi);
     final bitisFiyatlar = await HistoricalPriceService.getClosePricesBatched(semboller, _bitisTarihi);
+    final islemlerBySymbol = <String, List<TransactionRow>>{};
+    for (final t in aralikIslemleri) {
+      (islemlerBySymbol[t.symbol] ??= []).add(t);
+    }
 
     double baslangicToplam = 0;
-    double bitisToplam = 0;
+    double cepToplam = 0;
     final liste = <_HissePerformansi>[];
 
     for (final sym in semboller) {
-      final basAdet = baslangicAdetler[sym] ?? 0;
-      final bitAdet = bitisAdetler[sym] ?? 0;
+      final basAdet = baslangicAdetlerDetayli[sym]?[_seciliPortfoyId] ?? 0;
+      final bitAdet = bitisAdetlerDetayli[sym]?[_seciliPortfoyId] ?? 0;
       final basFiyat = baslangicFiyatlar[sym];
       final bitFiyat = bitisFiyatlar[sym];
-
       final basDeger = (basAdet > 0 && basFiyat != null ? basAdet * basFiyat : 0).toDouble();
       final bitDeger = (bitAdet > 0 && bitFiyat != null ? bitAdet * bitFiyat : 0).toDouble();
+      final symIslemler = (islemlerBySymbol[sym] ?? [])..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
       baslangicToplam += basDeger;
-      bitisToplam += bitDeger;
+      double splitEklenenAdet = 0;
+      for (final t in symIslemler) {
+        if (t.transactionType == 'split') splitEklenenAdet += (t.quantity ?? 0);
+      }
+      final splitOrani = basAdet > 0 ? ((basAdet + splitEklenenAdet) / basAdet) : null;
+      final baslangicReelFiyat = (splitOrani != null && splitOrani > 0 && basFiyat != null) ? basFiyat * splitOrani : basFiyat;
 
-      if (basAdet > 0 || bitAdet > 0) {
-        double? degisimYuzde;
-        if (basDeger > 0 && bitDeger > 0) {
-          degisimYuzde = ((bitDeger - basDeger) / basDeger) * 100;
-        } else if (bitDeger > 0) {
-          degisimYuzde = 100;
-        } else if (basDeger > 0) {
-          degisimYuzde = -100;
+      double cepEtki = -basDeger + bitDeger;
+      final detaylar = <_HareketDetayi>[];
+      for (final t in symIslemler) {
+        final komisyon = t.commission ?? 0;
+        final qty = t.quantity ?? 0;
+        final brut = qty * t.price;
+        if (t.transactionType == 'sell') {
+          final net = brut - komisyon;
+          cepEtki += net;
+          detaylar.add(_HareketDetayi(
+            tip: 'Satış',
+            aciklama: '${qty.toStringAsFixed(0)} adet × ${_formatTutar(t.price)} ₺',
+            etki: net,
+            tarih: t.createdAt,
+          ));
+        } else if (t.transactionType == 'buy') {
+          final net = brut + komisyon;
+          cepEtki -= net;
+          detaylar.add(_HareketDetayi(
+            tip: 'Alım',
+            aciklama: '${qty.toStringAsFixed(0)} adet × ${_formatTutar(t.price)} ₺',
+            etki: -net,
+            tarih: t.createdAt,
+          ));
+        } else if (t.transactionType == 'split') {
+          final net = brut + komisyon;
+          cepEtki -= net;
+          detaylar.add(_HareketDetayi(
+            tip: 'Bölünme',
+            aciklama: '${qty.toStringAsFixed(0)} adet × ${_formatTutar(t.price)} ₺',
+            etki: -net,
+            tarih: t.createdAt,
+          ));
+        } else if (t.transactionType == 'dividend') {
+          cepEtki += t.price;
+          detaylar.add(_HareketDetayi(
+            tip: 'Temettü',
+            aciklama: 'Nakit temettü',
+            etki: t.price,
+            tarih: t.createdAt,
+          ));
         }
+      }
+
+      final sadeceIslemVar = basAdet <= 0 && bitAdet <= 0 && symIslemler.isNotEmpty;
+      if (basAdet > 0 || bitAdet > 0 || symIslemler.isNotEmpty) {
+        final baz = basDeger > 0 ? basDeger : null;
+        final degisimYuzde = baz != null && baz > 0 ? (cepEtki / baz) * 100 : null;
+        cepToplam += cepEtki;
 
         liste.add(_HissePerformansi(
           symbol: sym,
+          portfolioId: _seciliPortfoyId!,
           baslangicDeger: basDeger,
           bitisDeger: bitDeger,
+          baslangicAdet: basAdet,
+          bitisAdet: bitAdet,
+          baslangicFiyat: baslangicReelFiyat,
+          bitisFiyat: bitFiyat,
+          cepEtki: cepEtki,
           degisimYuzde: degisimYuzde,
+          detaylar: detaylar,
+          sadeceIslemVar: sadeceIslemVar,
         ));
       }
     }
 
-    liste.sort((a, b) => (b.bitisDeger + b.baslangicDeger).compareTo(a.bitisDeger + a.baslangicDeger));
+    final normalizeBitisDegeri = baslangicToplam + cepToplam;
+    liste.sort((a, b) {
+      if (a.sadeceIslemVar != b.sadeceIslemVar) return a.sadeceIslemVar ? 1 : -1;
+      return b.cepEtki.abs().compareTo(a.cepEtki.abs());
+    });
 
     if (mounted) {
       setState(() {
         _baslangicDeger = baslangicToplam;
-        _bitisDeger = bitisToplam;
+        _bitisDeger = normalizeBitisDegeri;
         _hissePerformanslari = liste;
       });
     }
@@ -243,6 +338,21 @@ class _PerformansPageState extends State<PerformansPage> {
                       ),
                     ],
                   ],
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const PerformansHesaplamaInfoPage()),
+                      );
+                    },
+                    icon: const Icon(Icons.info_outline_rounded),
+                    label: const Text('Hesaplama yöntemi'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.navyBlue,
+                      side: AppTheme.ghostBorderSide(AppTheme.primaryIndigo, 0.15),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
                   const SizedBox(height: 80),
                 ],
               ),
@@ -298,15 +408,30 @@ class _PerformansPageState extends State<PerformansPage> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
-            hint: const Text('Tümü'),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('Tümü')),
-              ..._portfoyler.map((p) => DropdownMenuItem(
+            items: _portfoyler.map((p) => DropdownMenuItem(
                     value: p.id,
-                    child: Text(p.name, overflow: TextOverflow.ellipsis),
-                  )),
-            ],
-            onChanged: (v) => setState(() => _seciliPortfoyId = v),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: Text(p.name, overflow: TextOverflow.ellipsis)),
+                        if (p.isShared) ...[
+                          const SizedBox(width: 6),
+                          Icon(Icons.people_outline, size: 16, color: Colors.grey[600]),
+                          if (p.isSharedWithMe && p.ownerEmailHint != null) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '(@${p.ownerEmailHint})',
+                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            ),
+                          ],
+                        ],
+                      ],
+                    ),
+                  )).toList(),
+            onChanged: (v) {
+              setState(() => _seciliPortfoyId = v);
+              _hesapla();
+            },
           ),
         ],
       ),
@@ -431,7 +556,7 @@ class _PerformansPageState extends State<PerformansPage> {
             '${_formatTutar(_bitisDeger!)} ₺',
             style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
           ),
-          const Divider(height: 24, color: Colors.white24),
+          const SizedBox(height: 24),
           Text(
             '${degisim >= 0 ? '+' : ''}${_formatTutar(degisim)} ₺  (${degisim >= 0 ? '+' : ''}${degisimYuzde.toStringAsFixed(2)}%)',
             style: GoogleFonts.inter(
@@ -446,35 +571,119 @@ class _PerformansPageState extends State<PerformansPage> {
   }
 
   Widget _buildHissePerformansKarti(_HissePerformansi h) {
+    final p = _portfoyler.where((x) => x.id == h.portfolioId).firstOrNull;
+    final portfoyAdi = p?.name ?? (h.portfolioId == 'ana_portfoy' ? 'Ana Portföy' : 'Bilinmeyen');
+    final isShared = p?.isShared ?? false;
+    final ownerHint = p?.ownerEmailHint;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
-      decoration: AppTheme.cardDecoration(context),
-      child: Row(
+      decoration: (h.sadeceIslemVar
+              ? AppTheme.cardDecoration(context).copyWith(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0xFF2A2630)
+                      : const Color(0xFFFFF6E6),
+                )
+              : AppTheme.cardDecoration(context)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          StockLogo(symbol: h.symbol, size: 40),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(LogoService.symbolForDisplay(h.symbol), style: AppTheme.symbol(context)),
-                Text(
-                  '${_formatTutar(h.baslangicDeger)} ₺ → ${_formatTutar(h.bitisDeger)} ₺',
-                  style: AppTheme.bodySmall(context),
+          Row(
+            children: [
+              StockLogo(symbol: h.symbol, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(LogoService.symbolForDisplay(h.symbol), style: AppTheme.symbol(context)),
+                    Text(
+                      'Adet: ${h.baslangicAdet.toStringAsFixed(2)} → ${h.bitisAdet.toStringAsFixed(2)}',
+                      style: AppTheme.bodySmall(context),
+                    ),
+                    Text(
+                      'Fiyat: ${h.baslangicFiyat != null ? "${_formatTutar(h.baslangicFiyat!)} ₺" : "-"} → ${h.bitisFiyat != null ? "${_formatTutar(h.bitisFiyat!)} ₺" : "-"}',
+                      style: AppTheme.bodySmall(context),
+                    ),
+                    Text(
+                      'Cep etkisi: ${h.cepEtki >= 0 ? '+' : ''}${_formatTutar(h.cepEtki)} ₺',
+                      style: AppTheme.bodySmall(context),
+                    ),
+                  ],
                 ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${h.cepEtki >= 0 ? '+' : ''}${_formatTutar(h.cepEtki)} ₺',
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: h.cepEtki >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed,
+                    ),
+                  ),
+                  if (h.degisimYuzde != null)
+                    Text(
+                      '${h.degisimYuzde! >= 0 ? '+' : ''}${h.degisimYuzde!.toStringAsFixed(2)}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: h.degisimYuzde! >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          if (h.detaylar.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            ...h.detaylar.map((d) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${d.tip}: ${d.aciklama} (${DateFormat('dd.MM.yyyy', 'tr_TR').format(d.tarih)})',
+                          style: AppTheme.bodySmall(context),
+                        ),
+                      ),
+                      Text(
+                        '${d.etki >= 0 ? '+' : ''}${_formatTutar(d.etki)} ₺',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: d.etki >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed,
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+          if (_seciliPortfoyId == null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(width: 52), // Logo + spacing
+                if (isShared) ...[
+                  Icon(Icons.people_outline, size: 12, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  portfoyAdi,
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.w500),
+                ),
+                if (isShared && ownerHint != null) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '(@$ownerHint)',
+                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                  ),
+                ],
               ],
             ),
-          ),
-          if (h.degisimYuzde != null)
-            Text(
-              '${h.degisimYuzde! >= 0 ? '+' : ''}${h.degisimYuzde!.toStringAsFixed(2)}%',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: h.degisimYuzde! >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed,
-              ),
-            ),
+          ],
         ],
       ),
     );
@@ -485,52 +694,85 @@ class _PerformansPageState extends State<PerformansPage> {
     final yuzde = t.satisKarYuzde;
     final karda = kar >= 0;
 
+    final p = _portfoyler.where((x) => x.id == t.portfolioId).firstOrNull;
+    final portfoyAdi = p?.name ?? (t.portfolioId == null ? 'Ana Portföy' : 'Bilinmeyen');
+    final isShared = p?.isShared ?? false;
+    final ownerHint = p?.ownerEmailHint;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
       decoration: AppTheme.cardDecoration(context),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          StockLogo(symbol: t.symbol, size: 36),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(LogoService.symbolForDisplay(t.symbol), style: AppTheme.symbol(context)),
-                Text(
-                  DateFormat('dd.MM.yyyy', 'tr_TR').format(t.createdAt),
-                  style: AppTheme.bodySmall(context),
-                ),
-                if (t.quantity != null)
-                  Text(
-                    '${t.quantity!.toStringAsFixed(0)} adet × ${_formatTutar(t.price)} ₺',
-                    style: AppTheme.bodySmall(context),
-                  ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Row(
             children: [
-              Text(
-                '${kar >= 0 ? '+' : ''}${_formatTutar(kar)} ₺',
-                style: GoogleFonts.inter(
-                  fontWeight: FontWeight.w700,
-                  color: karda ? AppTheme.emeraldGreen : AppTheme.softRed,
+              StockLogo(symbol: t.symbol, size: 36),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(LogoService.symbolForDisplay(t.symbol), style: AppTheme.symbol(context)),
+                    Text(
+                      DateFormat('dd.MM.yyyy', 'tr_TR').format(t.createdAt),
+                      style: AppTheme.bodySmall(context),
+                    ),
+                    if (t.quantity != null)
+                      Text(
+                        '${t.quantity!.toStringAsFixed(0)} adet × ${_formatTutar(t.price)} ₺',
+                        style: AppTheme.bodySmall(context),
+                      ),
+                  ],
                 ),
               ),
-              if (yuzde != null)
-                Text(
-                  '${yuzde >= 0 ? '+' : ''}${yuzde.toStringAsFixed(2)}%',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: karda ? AppTheme.emeraldGreen : AppTheme.softRed,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${kar >= 0 ? '+' : ''}${_formatTutar(kar)} ₺',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w700,
+                      color: karda ? AppTheme.emeraldGreen : AppTheme.softRed,
+                    ),
                   ),
-                ),
+                  if (yuzde != null)
+                    Text(
+                      '${yuzde >= 0 ? '+' : ''}${yuzde.toStringAsFixed(2)}%',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: karda ? AppTheme.emeraldGreen : AppTheme.softRed,
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
+          if (_seciliPortfoyId == null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(width: 48), // Logo + spacing
+                if (isShared) ...[
+                  Icon(Icons.people_outline, size: 12, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                ],
+                Text(
+                  portfoyAdi,
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600], fontWeight: FontWeight.w500),
+                ),
+                if (isShared && ownerHint != null) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '(@$ownerHint)',
+                    style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                  ),
+                ],
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -539,15 +781,45 @@ class _PerformansPageState extends State<PerformansPage> {
 
 class _HissePerformansi {
   final String symbol;
+  final String portfolioId;
   final double baslangicDeger;
   final double bitisDeger;
+  final double baslangicAdet;
+  final double bitisAdet;
+  final double? baslangicFiyat;
+  final double? bitisFiyat;
+  final double cepEtki;
   final double? degisimYuzde;
+  final List<_HareketDetayi> detaylar;
+  final bool sadeceIslemVar;
 
   _HissePerformansi({
     required this.symbol,
+    required this.portfolioId,
     required this.baslangicDeger,
     required this.bitisDeger,
+    required this.baslangicAdet,
+    required this.bitisAdet,
+    required this.baslangicFiyat,
+    required this.bitisFiyat,
+    required this.cepEtki,
     this.degisimYuzde,
+    this.detaylar = const [],
+    this.sadeceIslemVar = false,
+  });
+}
+
+class _HareketDetayi {
+  final String tip;
+  final String aciklama;
+  final double etki;
+  final DateTime tarih;
+
+  _HareketDetayi({
+    required this.tip,
+    required this.aciklama,
+    required this.etki,
+    required this.tarih,
   });
 }
 

@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../app_theme.dart';
+import '../crypto_theme.dart';
 
 /// Sabit alt navigasyon çubuğu – Ana Sayfa, Geçmiş, Zaman Tüneli, Performans, Portföyler
 class AppBottomNavBar extends StatelessWidget {
   final String currentRoute;
   final ValueChanged<int>? onTap;
+  final bool cryptoMode;
 
   const AppBottomNavBar({
     super.key,
     required this.currentRoute,
     this.onTap,
+    this.cryptoMode = false,
   });
 
   int get _currentIndex {
@@ -34,20 +38,89 @@ class AppBottomNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = isDark ? AppTheme.bgDark : Colors.white;
-    final activeColor = AppTheme.smokyJade;
-    final inactiveColor = isDark ? AppTheme.textSecondary : Colors.grey.shade600;
+
+    if (cryptoMode) {
+      return ClipRect(
+        child: BackdropFilter(
+          filter: CryptoTheme.glassBlur,
+          child: Container(
+            decoration: BoxDecoration(
+              color: CryptoTheme.glassBarColor(context),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                        child: _NavItem(
+                      icon: Icons.home_rounded,
+                      label: 'Ana Sayfa',
+                      isActive: _currentIndex == 0,
+                      activeColor: CryptoTheme.primaryElectric,
+                      inactiveColor: CryptoTheme.textSecondaryFor(context),
+                      radius: CryptoTheme.radius,
+                      onTap: () => onTap?.call(0),
+                    )),
+                    Expanded(
+                        child: _NavItem(
+                      icon: Icons.history_rounded,
+                      label: 'Geçmiş',
+                      isActive: _currentIndex == 1,
+                      activeColor: CryptoTheme.primaryElectric,
+                      inactiveColor: CryptoTheme.textSecondaryFor(context),
+                      radius: CryptoTheme.radius,
+                      onTap: () => onTap?.call(1),
+                    )),
+                    Expanded(
+                        child: _NavItem(
+                      icon: Icons.timeline_rounded,
+                      label: 'Zaman Tüneli',
+                      isActive: _currentIndex == 2,
+                      activeColor: CryptoTheme.primaryElectric,
+                      inactiveColor: CryptoTheme.textSecondaryFor(context),
+                      radius: CryptoTheme.radius,
+                      onTap: () => onTap?.call(2),
+                    )),
+                    Expanded(
+                        child: _NavItem(
+                      icon: Icons.analytics_rounded,
+                      label: 'Performans',
+                      isActive: _currentIndex == 3,
+                      activeColor: CryptoTheme.primaryElectric,
+                      inactiveColor: CryptoTheme.textSecondaryFor(context),
+                      radius: CryptoTheme.radius,
+                      onTap: () => onTap?.call(3),
+                    )),
+                    Expanded(
+                        child: _NavItem(
+                      icon: Icons.account_balance_wallet_rounded,
+                      label: 'Portföyler',
+                      isActive: _currentIndex == 4,
+                      activeColor: CryptoTheme.primaryElectric,
+                      inactiveColor: CryptoTheme.textSecondaryFor(context),
+                      radius: CryptoTheme.radius,
+                      onTap: () => onTap?.call(4),
+                    )),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final bgColor = isDark ? AppTheme.bgDark : AppTheme.surface;
+    final activeColor = AppTheme.primaryIndigo;
+    final inactiveColor =
+        isDark ? AppTheme.textSecondary : AppTheme.onSurface.withValues(alpha: 0.55);
 
     return Container(
       decoration: BoxDecoration(
         color: bgColor,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, -2),
-          ),
-        ],
+        boxShadow: AppTheme.floatingShadow,
       ),
       child: SafeArea(
         top: false,
@@ -55,44 +128,54 @@ class AppBottomNavBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Row(
             children: [
-              Expanded(child: _NavItem(
+              Expanded(
+                  child: _NavItem(
                 icon: Icons.home_rounded,
                 label: 'Ana Sayfa',
                 isActive: _currentIndex == 0,
                 activeColor: activeColor,
                 inactiveColor: inactiveColor,
+                radius: AppTheme.radiusXl,
                 onTap: () => onTap?.call(0),
               )),
-              Expanded(child: _NavItem(
+              Expanded(
+                  child: _NavItem(
                 icon: Icons.history_rounded,
                 label: 'Geçmiş',
                 isActive: _currentIndex == 1,
                 activeColor: activeColor,
                 inactiveColor: inactiveColor,
+                radius: AppTheme.radiusXl,
                 onTap: () => onTap?.call(1),
               )),
-              Expanded(child: _NavItem(
+              Expanded(
+                  child: _NavItem(
                 icon: Icons.timeline_rounded,
                 label: 'Zaman Tüneli',
                 isActive: _currentIndex == 2,
                 activeColor: activeColor,
                 inactiveColor: inactiveColor,
+                radius: AppTheme.radiusXl,
                 onTap: () => onTap?.call(2),
               )),
-              Expanded(child: _NavItem(
+              Expanded(
+                  child: _NavItem(
                 icon: Icons.analytics_rounded,
                 label: 'Performans',
                 isActive: _currentIndex == 3,
                 activeColor: activeColor,
                 inactiveColor: inactiveColor,
+                radius: AppTheme.radiusXl,
                 onTap: () => onTap?.call(3),
               )),
-              Expanded(child: _NavItem(
+              Expanded(
+                  child: _NavItem(
                 icon: Icons.account_balance_wallet_rounded,
                 label: 'Portföyler',
                 isActive: _currentIndex == 4,
                 activeColor: activeColor,
                 inactiveColor: inactiveColor,
+                radius: AppTheme.radiusXl,
                 onTap: () => onTap?.call(4),
               )),
             ],
@@ -109,6 +192,7 @@ class _NavItem extends StatelessWidget {
   final bool isActive;
   final Color activeColor;
   final Color inactiveColor;
+  final double radius;
   final VoidCallback? onTap;
 
   const _NavItem({
@@ -117,6 +201,7 @@ class _NavItem extends StatelessWidget {
     required this.isActive,
     required this.activeColor,
     required this.inactiveColor,
+    required this.radius,
     this.onTap,
   });
 
@@ -125,7 +210,7 @@ class _NavItem extends StatelessWidget {
     final color = isActive ? activeColor : inactiveColor;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(radius),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
         child: Column(

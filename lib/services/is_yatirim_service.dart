@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:html/parser.dart' as html_parser;
+import 'package:html/dom.dart';
 import 'package:http/http.dart' as http;
 import '../logo_service.dart';
 import '../models/is_yatirim_model.dart';
+import '../util/company_about_text.dart';
 
 const _baseUrl = 'https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/sirket-karti.aspx';
 const _headers = {
@@ -12,6 +16,127 @@ const _headers = {
 
 /// İş Yatırım şirket kartından finansal verileri çeker
 class IsYatirimService {
+  static String _decodeResponseBody(http.Response response) {
+    final ct = response.headers['content-type']?.toLowerCase() ?? '';
+    final bytes = response.bodyBytes;
+    if (ct.contains('iso-8859') ||
+        ct.contains('windows-1254') ||
+        ct.contains('charset=windows-1254')) {
+      return latin1.decode(bytes);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  /// İş Yatırım şirket kartından şirket profili (künye + faaliyet alanı) çeker.
+  /// Sembol URL'de .IS olmadan kullanılır (THYAO.IS -> THYAO).
+  /// Yanıt çoğunlukla UTF-8; charset latin ise latin1 kullanılır.
+  static Future<IsYatirimCompanyProfile?> fetchCompanyProfile(String symbol) async {
+    try {
+      final base = LogoService.symbolForLogo(symbol).toUpperCase();
+      if (base.isEmpty) return null;
+      final url = '$_baseUrl?hisse=$base';
+
+      final response = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 12));
+
+      if (response.statusCode != 200) return null;
+      final body = _decodeResponseBody(response);
+      return _parseCompanyProfileHtml(body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static IsYatirimCompanyProfile? _parseCompanyProfileHtml(String body) {
+    final doc = html_parser.parse(body);
+    doc.querySelectorAll('script, style, noscript').forEach((e) => e.remove());
+
+    String? sirketUnvani;
+    String? kurulusTarihi;
+    String? genelMudur;
+    String? sektor;
+    String? webSitesi;
+    String? halkaArzTarihi;
+    String? odenmisSermaye;
+    String? fiiliDolasimOraniStr;
+    double? fiiliDolasimOraniYuzde;
+    String? sirketHakkinda;
+
+    String trimLabel(String s) => _cleanText(s);
+
+    void setFromLabel(String label, String value) {
+      final v = _cleanText(value);
+      final l = trimLabel(label);
+      if (v.isEmpty) return;
+      if (_labelContains(l, 'Genel Müdür')) genelMudur ??= v;
+      else if (_labelContains(l, 'Kuruluş Tarihi')) kurulusTarihi ??= v;
+      else if (_labelContains(l, 'Faaliyet Alanı') || _labelContains(l, 'Sektör')) sektor ??= v;
+      else if (_labelContains(l, 'Web Adresi')) webSitesi ??= v;
+      else if (_labelContains(l, 'Halka Arz Tarihi')) halkaArzTarihi ??= v;
+      else if (_labelContains(l, 'Ödenmiş Sermaye')) odenmisSermaye ??= v;
+      else if (_labelContains(l, 'Fiili Dolaşım Oranı')) {
+        fiiliDolasimOraniStr ??= v;
+        final numStr = v.replaceAll('%', '').replaceAll(',', '.').trim();
+        fiiliDolasimOraniYuzde ??= double.tryParse(numStr);
+      }
+    }
+
+    // Tablolarda: <th> veya <td> başlık, hemen sonraki <td> değer
+    final tables = doc.querySelectorAll('table');
+    for (final table in tables) {
+      final rows = table.querySelectorAll('tr');
+      for (final row in rows) {
+        final cells = row.querySelectorAll('td, th');
+        if (cells.length >= 2) {
+          final label = trimLabel(cells[0].text);
+          final value = trimLabel(cells[1].text);
+          setFromLabel(label, value);
+        }
+      }
+    }
+
+    // Tüm td/th sıralı: label sonra değer
+    final cells = doc.querySelectorAll('td, th');
+    for (var i = 0; i < cells.length - 1; i++) {
+      setFromLabel(_cleanText(cells[i].text), _cleanText(cells[i + 1].text));
+    }
+
+    if (sirketUnvani == null) {
+      final title = doc.querySelector('title');
+      if (title != null) {
+        final t = _cleanText(title.text);
+        if (t.isNotEmpty && !t.toLowerCase().startsWith('error')) sirketUnvani = t;
+      }
+    }
+    if (sirketUnvani == null) {
+      final h1 = doc.querySelector('h1');
+      if (h1 != null) {
+        final t = _cleanText(h1.text);
+        if (t.isNotEmpty) sirketUnvani = t;
+      }
+    }
+
+    sirketHakkinda = _extractSirketHakkinda(doc);
+
+    return IsYatirimCompanyProfile(
+      sirketUnvani: sirketUnvani,
+      kurulusTarihi: kurulusTarihi,
+      genelMudur: genelMudur,
+      sektor: sektor,
+      webSitesi: webSitesi,
+      halkaArzTarihi: halkaArzTarihi,
+      odenmisSermaye: odenmisSermaye,
+      fiiliDolasimOrani: fiiliDolasimOraniStr,
+      fiiliDolasimOraniYuzde: fiiliDolasimOraniYuzde,
+      sirketHakkinda: sirketHakkinda,
+    );
+  }
+
+  static bool _labelContains(String label, String needle) {
+    return label.toLowerCase().contains(needle.toLowerCase());
+  }
+
   static Future<IsYatirimModel> sirketKartiAl(String symbol) async {
     final base = LogoService.symbolForLogo(symbol).toUpperCase();
     final url = '$_baseUrl?hisse=$base';
@@ -24,7 +149,36 @@ class IsYatirimService {
       throw Exception('İş Yatırım sayfası alınamadı (HTTP ${response.statusCode})');
     }
 
-    return _parseHtml(response.body);
+    final body = _decodeResponseBody(response);
+    return _parseHtml(body);
+  }
+
+  /// Script/menü dışı, anlamlı faaliyet paragrafı.
+  static String? _extractSirketHakkinda(Document doc) {
+    const selectors = [
+      'main p',
+      'article p',
+      '[role="main"] p',
+      '.ms-richtextfield p',
+      '.ms-rtestate-field p',
+      '#DeltaPlaceHolderMain p',
+      '.ms-rte-wpcontainer p',
+    ];
+    for (final sel in selectors) {
+      for (final p in doc.querySelectorAll(sel)) {
+        final text = _cleanText(p.text);
+        if (text.length < 80) continue;
+        if (CompanyAboutText.isGarbage(text)) continue;
+        return text;
+      }
+    }
+    for (final p in doc.querySelectorAll('p')) {
+      final text = _cleanText(p.text);
+      if (text.length < 120) continue;
+      if (CompanyAboutText.isGarbage(text)) continue;
+      return text;
+    }
+    return null;
   }
 
   static IsYatirimModel _parseHtml(String body) {
@@ -113,9 +267,10 @@ class IsYatirimService {
   }
 
   static bool _matchesLabel(String label, String a, [String? b, String? c]) {
-    if (label.contains(a)) return true;
-    if (b != null && label.contains(b)) return true;
-    if (c != null && label.contains(c)) return true;
+    final l = label.toLowerCase();
+    if (l.contains(a.toLowerCase())) return true;
+    if (b != null && l.contains(b.toLowerCase())) return true;
+    if (c != null && l.contains(c.toLowerCase())) return true;
     return false;
   }
 

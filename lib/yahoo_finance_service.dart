@@ -1,5 +1,8 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'data/bist_hisseleri.dart';
 
 /// Yahoo Finance'tan hisse bilgisi (anlık fiyat ve tam ad) çeker.
 class YahooFinanceService {
@@ -31,9 +34,6 @@ class YahooFinanceService {
       '$_baseUrl/$symbol?interval=1d&range=5d&includePrePost=false',
     );
 
-    // Debug
-    print('[Yahoo hisseAra] URL: $url');
-
     final response = await http.get(url, headers: _headers).timeout(
       const Duration(seconds: 10),
       onTimeout: () => throw YahooFinanceHata(
@@ -41,10 +41,8 @@ class YahooFinanceService {
       ),
     );
 
-    print('[Yahoo hisseAra] Status: ${response.statusCode}');
-    print('[Yahoo hisseAra] Body: ${response.body.length > 500 ? "${response.body.substring(0, 500)}..." : response.body}');
-
     if (response.statusCode != 200) {
+      debugPrint('[Yahoo hisseAra] HTTP ${response.statusCode} URL: $url');
       throw YahooFinanceHata(
         'Hisse bulunamadı veya sunucu hatası. (HTTP ${response.statusCode})',
       );
@@ -130,42 +128,113 @@ class YahooFinanceService {
   }
 
   /// Hisse adı veya sembolüne göre arama yapar (autocomplete için).
+  /// Hem hisse kodu (CONSE, CANTE) hem şirket adı (Consus Enerji, Can Termik) ile arar.
+  /// Önce yerel BIST listesinden, sonra Yahoo API'den arar.
   static Future<List<HisseAramaSonucu>> hisseAraListele(String sorgu) async {
     final q = sorgu.trim();
     if (q.isEmpty) return [];
+
+    final sonuclar = <HisseAramaSonucu>[];
+    final varOlanSemboller = <String>{};
+    final symbolUpper = q.toUpperCase().replaceAll(' ', '');
+
+    // 1. Yerel BIST Listesinden Arama (Öncelikli)
+    // Kod ile başlayanlar
+    bistHisseleri.forEach((kod, ad) {
+      if (kod.startsWith(symbolUpper)) {
+        if (!varOlanSemboller.contains(kod)) {
+          varOlanSemboller.add(kod);
+          sonuclar.add(HisseAramaSonucu(
+            sembol: '$kod.IS',
+            kisaAd: kod,
+            uzunAd: ad,
+            borsa: 'IST',
+            tip: 'EQUITY',
+          ));
+        }
+      }
+    });
+
+    // İsim içinde geçenler (3 harften uzunsa)
+    if (q.length >= 3) {
+      final qUpperTr = symbolUpper.replaceAll('i', 'İ').replaceAll('ı', 'I');
+      bistHisseleri.forEach((kod, ad) {
+        if (varOlanSemboller.contains(kod)) return;
+        final adUpper = ad.toUpperCase().replaceAll('i', 'İ').replaceAll('ı', 'I');
+        
+        // Basit içerir kontrolü (hem İngilizce hem Türkçe karakterler için)
+        if (adUpper.contains(symbolUpper) || adUpper.contains(qUpperTr)) {
+          varOlanSemboller.add(kod);
+          sonuclar.add(HisseAramaSonucu(
+            sembol: '$kod.IS',
+            kisaAd: kod,
+            uzunAd: ad,
+            borsa: 'IST',
+            tip: 'EQUITY',
+          ));
+        }
+      });
+    }
+
+    // Sorgu hisse kodu gibi görünüyorsa (2–5 harf): doğrudan sembol ile dene (yerel listede yoksa)
+    if (symbolUpper.length >= 2 &&
+        symbolUpper.length <= 5 &&
+        RegExp(r'^[A-Z]+$').hasMatch(symbolUpper) &&
+        !varOlanSemboller.contains(symbolUpper)) {
+      final sym = '$symbolUpper.IS';
+      try {
+        // API çağrısı yapmadan önce yerel listede yoksa dene
+        // Ancak bu API çağrısı yavaşlatabilir, sadece arama API'si yeterli olabilir.
+        // Yine de garanti olsun diye bırakıyoruz.
+        final meta = await chartMetaAlSymbol(sym);
+        if (meta != null) {
+          sonuclar.add(HisseAramaSonucu(
+            sembol: meta.symbol,
+            kisaAd: meta.longName,
+            uzunAd: meta.longName,
+            borsa: '',
+            tip: 'EQUITY',
+          ));
+          varOlanSemboller.add(symbolUpper);
+        }
+      } catch (_) {}
+    }
 
     final url = Uri.parse(_searchUrl).replace(
       queryParameters: {'q': q, 'quotesCount': '10', 'newsCount': '0'},
     );
 
-    print('[Yahoo hisseAraListele] URL: $url');
-
-    final response = await http.get(url, headers: _headers).timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => throw YahooFinanceHata('Arama zaman aşımına uğradı.'),
-    );
-
-    print('[Yahoo hisseAraListele] Status: ${response.statusCode}');
-    print('[Yahoo hisseAraListele] Body: ${response.body.length > 500 ? "${response.body.substring(0, 500)}..." : response.body}');
-
-    if (response.statusCode != 200) return [];
-
     try {
+      final response = await http.get(url, headers: _headers).timeout(
+        const Duration(seconds: 5), // Timeout süresini kısalttım (8 -> 5)
+        onTimeout: () => throw YahooFinanceHata('Arama zaman aşımına uğradı.'),
+      );
+
+      if (response.statusCode != 200) return sonuclar;
+
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final quotes = json['quotes'] as List<dynamic>?;
-      if (quotes == null || quotes.isEmpty) return [];
+      if (quotes == null || quotes.isEmpty) return sonuclar;
 
-      final sonuclar = <HisseAramaSonucu>[];
-      for (final q in quotes) {
-        final m = q as Map<String, dynamic>;
+      for (final quote in quotes) {
+        final m = quote as Map<String, dynamic>;
         final symbol = m['symbol'] as String? ?? '';
         final shortname = m['shortname'] as String? ?? '';
         final longname = m['longname'] as String? ?? shortname;
         final exchange = m['exchange'] as String? ?? '';
         final quoteType = m['quoteType'] as String? ?? '';
+        
         if (symbol.isEmpty) continue;
-        // Sadece BIST (İstanbul Borsası) hisseleri - sembol .IS ile bitmeli
+        
+        // Sadece .IS olanları alıyoruz (BIST)
         if (!symbol.toUpperCase().endsWith('.IS')) continue;
+
+        // Sembolün kökünü al (THYAO.IS -> THYAO)
+        final rootSymbol = symbol.toUpperCase().replaceAll('.IS', '');
+        
+        if (varOlanSemboller.contains(rootSymbol)) continue;
+        
+        varOlanSemboller.add(rootSymbol);
         sonuclar.add(HisseAramaSonucu(
           sembol: symbol,
           kisaAd: shortname,
@@ -176,7 +245,7 @@ class YahooFinanceService {
       }
       return sonuclar;
     } catch (_) {
-      return [];
+      return sonuclar;
     }
   }
 
@@ -196,17 +265,13 @@ class YahooFinanceService {
     );
 
     try {
-      print('[Yahoo dovizKuruAl] URL: $url');
-
       final response = await http.get(url, headers: _headers).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw YahooFinanceHata('Döviz kuru alınamadı.'),
       );
 
-      print('[Yahoo dovizKuruAl] Status: ${response.statusCode}');
-      print('[Yahoo dovizKuruAl] Body: ${response.body.length > 500 ? "${response.body.substring(0, 500)}..." : response.body}');
-
       if (response.statusCode != 200) {
+        debugPrint('[Yahoo dovizKuruAl] HTTP ${response.statusCode} URL: $url');
         throw YahooFinanceHata('Döviz kuru alınamadı. (HTTP ${response.statusCode})');
       }
 
@@ -243,46 +308,30 @@ class YahooFinanceService {
     }
   }
 
-  /// Grafik serisinde son bardan farklı işlem gününe ait kapanışı döndürür (BIST için meta.chartPreviousClose yanlış olabiliyor).
-  /// Null kapanışları atlayarak bir önceki işlem gününün kapanışını bulur; Türkiye günü (UTC+3) kullanılır.
+  /// Grafik serisinde bir önceki mumun kapanışını döndürür (BIST için meta.chartPreviousClose sıklıkla yanlış).
+  /// Günlük grafikte son iki geçerli kapanıştan ikincisi = önceki işlem günü kapanışı.
   static double? _oncekiKapanisSeriden(Map<String, dynamic> result) {
     final quoteList = result['indicators']?['quote'] as List<dynamic>?;
     if (quoteList == null || quoteList.isEmpty) return null;
     final quote = quoteList.first as Map<String, dynamic>;
     final closeList = quote['close'] as List<dynamic>?;
-    final tsList = result['timestamp'] as List<dynamic>?;
     if (closeList == null || closeList.isEmpty) return null;
     double? parseClose(dynamic v) {
       if (v == null) return null;
       if (v is num) return v.toDouble();
       return double.tryParse(v.toString());
     }
-    if (tsList == null || tsList.length != closeList.length) {
-      for (var i = closeList.length - 2; i >= 0; i--) {
-        final v = parseClose(closeList[i]);
-        if (v != null && v > 0) return v;
-      }
-      return null;
-    }
-    int turkeyDayIndex(int ts) => (ts + 3 * 3600) ~/ 86400;
     int lastIdx = closeList.length - 1;
-    while (lastIdx >= 0 && parseClose(closeList[lastIdx]) == null) lastIdx--;
-    if (lastIdx < 0) return null;
-    final lastTs = tsList[lastIdx] is int ? (tsList[lastIdx] as int) : int.tryParse(tsList[lastIdx].toString());
-    if (lastTs == null) return null;
-    final lastDay = turkeyDayIndex(lastTs);
-    for (var i = lastIdx - 1; i >= 0; i--) {
-      final prevVal = parseClose(closeList[i]);
-      if (prevVal == null || prevVal <= 0) continue;
-      final ts = tsList[i] is int ? (tsList[i] as int) : int.tryParse(tsList[i].toString());
-      if (ts == null) continue;
-      if (turkeyDayIndex(ts) != lastDay) return prevVal;
+    while (lastIdx >= 0 && parseClose(closeList[lastIdx]) == null) {
+      lastIdx--;
     }
-    for (var i = closeList.length - 2; i >= 0; i--) {
-      final v = parseClose(closeList[i]);
-      if (v != null && v > 0) return v;
+    if (lastIdx < 1) return null;
+    int prevIdx = lastIdx - 1;
+    while (prevIdx >= 0 && parseClose(closeList[prevIdx]) == null) {
+      prevIdx--;
     }
-    return null;
+    if (prevIdx < 0) return null;
+    return parseClose(closeList[prevIdx]);
   }
 
   /// v8/finance/chart API'sinden hisse detay verisi çeker. Tek kaynak - quote kullanılmaz.
@@ -346,14 +395,15 @@ class YahooFinanceService {
       final previousClose = _oncekiKapanisSeriden(result) ?? parseNum(meta['chartPreviousClose']) ?? parseNum(meta['previousClose']);
       double? dayHigh = parseNum(meta['regularMarketDayHigh']);
       double? dayLow = parseNum(meta['regularMarketDayLow']);
-      final week52High = parseNum(meta['fiftyTwoWeekHigh']);
-      final week52Low = parseNum(meta['fiftyTwoWeekLow']);
+      double? week52High = parseNum(meta['fiftyTwoWeekHigh']);
+      double? week52Low = parseNum(meta['fiftyTwoWeekLow']);
+
+      final indicators = result['indicators'] as Map<String, dynamic>?;
+      final quoteList = indicators?['quote'] as List<dynamic>?;
+      final quote = (quoteList != null && quoteList.isNotEmpty) ? quoteList.first as Map<String, dynamic> : null;
 
       if (dayHigh == null || dayLow == null) {
-        final indicators = result['indicators'] as Map<String, dynamic>?;
-        final quoteList = indicators?['quote'] as List<dynamic>?;
-        if (quoteList != null && quoteList.isNotEmpty) {
-          final quote = quoteList.first as Map<String, dynamic>;
+        if (quote != null) {
           final highList = quote['high'] as List<dynamic>?;
           final lowList = quote['low'] as List<dynamic>?;
           final validHighs = highList?.whereType<num>().toList() ?? [];
@@ -363,8 +413,27 @@ class YahooFinanceService {
         }
       }
 
+      // 52 hafta verisi meta'da yoksa seriden hesapla
+      if (week52High == null || week52Low == null) {
+        if (quote != null) {
+          final closeList = quote['close'] as List<dynamic>?;
+          final validCloses = closeList?.whereType<num>().map((e) => e.toDouble()).toList() ?? [];
+          if (validCloses.isNotEmpty) {
+            if (week52High == null) week52High = validCloses.reduce((a, b) => a > b ? a : b);
+            if (week52Low == null) week52Low = validCloses.reduce((a, b) => a < b ? a : b);
+          }
+        }
+      }
+
       final longName = meta['longName'] as String? ?? meta['shortName'] as String? ?? symbol;
-      final regularMarketVolume = parseNum(meta['regularMarketVolume']);
+      double? regularMarketVolume = parseNum(meta['regularMarketVolume']);
+      if (regularMarketVolume == null && quote != null) {
+        final volumeList = quote['volume'] as List<dynamic>?;
+        if (volumeList != null && volumeList.isNotEmpty) {
+          final lastVol = volumeList.last;
+          if (lastVol != null) regularMarketVolume = (lastVol as num).toDouble();
+        }
+      }
       final currency = meta['currency'] as String? ?? 'TRY';
 
       return StockChartMeta(
@@ -503,14 +572,15 @@ class YahooFinanceService {
       final previousClose = _oncekiKapanisSeriden(result) ?? parseNum(meta['chartPreviousClose']) ?? parseNum(meta['previousClose']);
       double? dayHigh = parseNum(meta['regularMarketDayHigh']);
       double? dayLow = parseNum(meta['regularMarketDayLow']);
-      final week52High = parseNum(meta['fiftyTwoWeekHigh']);
-      final week52Low = parseNum(meta['fiftyTwoWeekLow']);
+      double? week52High = parseNum(meta['fiftyTwoWeekHigh']);
+      double? week52Low = parseNum(meta['fiftyTwoWeekLow']);
+
+      final indicators = result['indicators'] as Map<String, dynamic>?;
+      final quoteList = indicators?['quote'] as List<dynamic>?;
+      final quote = (quoteList != null && quoteList.isNotEmpty) ? quoteList.first as Map<String, dynamic> : null;
 
       if (dayHigh == null || dayLow == null) {
-        final indicators = result['indicators'] as Map<String, dynamic>?;
-        final quoteList = indicators?['quote'] as List<dynamic>?;
-        if (quoteList != null && quoteList.isNotEmpty) {
-          final quote = quoteList.first as Map<String, dynamic>;
+        if (quote != null) {
           final highList = quote['high'] as List<dynamic>?;
           final lowList = quote['low'] as List<dynamic>?;
           final validHighs = highList?.whereType<num>().toList() ?? [];
@@ -520,8 +590,27 @@ class YahooFinanceService {
         }
       }
 
+      // 52 hafta verisi meta'da yoksa seriden hesapla
+      if (week52High == null || week52Low == null) {
+        if (quote != null) {
+          final closeList = quote['close'] as List<dynamic>?;
+          final validCloses = closeList?.whereType<num>().map((e) => e.toDouble()).toList() ?? [];
+          if (validCloses.isNotEmpty) {
+            if (week52High == null) week52High = validCloses.reduce((a, b) => a > b ? a : b);
+            if (week52Low == null) week52Low = validCloses.reduce((a, b) => a < b ? a : b);
+          }
+        }
+      }
+
       final longName = meta['longName'] as String? ?? meta['shortName'] as String? ?? symbol;
-      final regularMarketVolume = parseNum(meta['regularMarketVolume']);
+      double? regularMarketVolume = parseNum(meta['regularMarketVolume']);
+      if (regularMarketVolume == null && quote != null) {
+        final volumeList = quote['volume'] as List<dynamic>?;
+        if (volumeList != null && volumeList.isNotEmpty) {
+          final lastVol = volumeList.last;
+          if (lastVol != null) regularMarketVolume = (lastVol as num).toDouble();
+        }
+      }
       final currency = meta['currency'] as String? ?? 'TRY';
 
       final stockMeta = StockChartMeta(
@@ -539,9 +628,6 @@ class YahooFinanceService {
 
       // Grafik serisi: timestamp + close
       final timestampList = result['timestamp'] as List<dynamic>?;
-      final indicators = result['indicators'] as Map<String, dynamic>?;
-      final quoteList = indicators?['quote'] as List<dynamic>?;
-      final quote = quoteList != null && quoteList.isNotEmpty ? quoteList.first as Map<String, dynamic> : null;
       final closeList = quote?['close'] as List<dynamic>?;
 
       final series = <StockChartPoint>[];
@@ -659,34 +745,20 @@ class YahooFinanceService {
     }
   }
 
-  /// Hisse için detaylı finansal bilgiler (52 hafta yüksek/düşük, P/F, piyasa değeri vb.)
-  /// Temel istatistikler: P/E, Beta, Market Cap, EPS, Dividend Yield, Revenue, Net Income vb.
-  /// quoteSummary BIST hisseleri için null dönebilir; chartMeta verilirse fallback olarak chart verileri kullanılır.
+  /// Hisse için detaylı finansal bilgiler (Company Overview, Sector, Beta, EPS vb.)
+  /// Endpoint: quoteSummary?modules=assetProfile,summaryDetail,defaultKeyStatistics,financialData
+  /// Sembol .IS ile kullanılır (örn: SNICA.IS).
   static Future<HisseDetayliBilgi?> hisseDetayliBilgiAl(String sembol, {StockChartMeta? chartMeta}) async {
     final raw = sembol.trim().toUpperCase();
     if (raw.isEmpty) return null;
     final symbol = _sembolIsEkle(raw);
 
     try {
-      // Önce tam modüllerle dene
-      var url = Uri.parse('$_quoteSummaryUrl/$symbol?modules=summaryDetail,defaultKeyStatistics,financialData,assetProfile,quoteType,calendarEvents,majorHoldersBreakdown');
-      var response = await http.get(url, headers: _headers).timeout(
+      final url = Uri.parse('$_quoteSummaryUrl/$symbol?modules=assetProfile,summaryDetail,defaultKeyStatistics,financialData');
+      final response = await http.get(url, headers: _headers).timeout(
         const Duration(seconds: 10),
         onTimeout: () => throw YahooFinanceHata('İstek zaman aşımına uğradı.'),
       );
-
-      // BIST için bazen tam modül listesi null döner; sadece temel modüllerle tekrar dene
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        dynamic resultList = (json['quoteSummary'] as Map<String, dynamic>?)?['result'];
-        if (resultList == null || (resultList is List && resultList.isEmpty)) {
-          url = Uri.parse('$_quoteSummaryUrl/$symbol?modules=summaryDetail,defaultKeyStatistics,financialData');
-          response = await http.get(url, headers: _headers).timeout(
-            const Duration(seconds: 10),
-            onTimeout: () => throw YahooFinanceHata('İstek zaman aşımına uğradı.'),
-          );
-        }
-      }
 
       if (response.statusCode != 200) {
         return _hisseDetayliBilgiFallback(symbol, chartMeta);
@@ -695,23 +767,22 @@ class YahooFinanceService {
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final quoteSummary = json['quoteSummary'] as Map<String, dynamic>?;
       dynamic resultList = quoteSummary?['result'];
-      if (resultList == null) return _hisseDetayliBilgiFallback(symbol, chartMeta);
-      if (resultList is List && resultList.isEmpty) return _hisseDetayliBilgiFallback(symbol, chartMeta);
+      if (resultList == null || (resultList is List && resultList.isEmpty)) {
+        return _hisseDetayliBilgiFallback(symbol, chartMeta);
+      }
 
       final result = (resultList as List).first as Map<String, dynamic>;
       final summary = result['summaryDetail'] as Map<String, dynamic>?;
       final keyStats = result['defaultKeyStatistics'] as Map<String, dynamic>?;
       final financialData = result['financialData'] as Map<String, dynamic>?;
       final assetProfile = result['assetProfile'] as Map<String, dynamic>?;
-      final quoteType = result['quoteType'] as Map<String, dynamic>?;
-      final calendarEvents = result['calendarEvents'] as Map<String, dynamic>?;
-      final majorHolders = result['majorHoldersBreakdown'] as Map<String, dynamic>?;
 
       if (summary == null) return _hisseDetayliBilgiFallback(symbol, chartMeta);
 
       double? parseNum(dynamic v) {
         if (v == null) return null;
         if (v is num) return v.toDouble();
+        if (v is Map && v['raw'] != null) return (v['raw'] as num).toDouble();
         return double.tryParse(v.toString());
       }
 
@@ -721,18 +792,36 @@ class YahooFinanceService {
         return s.isEmpty ? null : s;
       }
 
+      /// Yahoo .fmt formatlı string (veya raw'dan string)
+      String? parseFmt(dynamic v) {
+        if (v == null) return null;
+        if (v is Map && v['fmt'] != null) return (v['fmt'] as String).trim();
+        final s = v.toString().trim();
+        return s.isEmpty ? null : s;
+      }
+
       final hisseBilgi = await hisseAra(symbol);
 
-      // Temel istatistikleri çek
+      // Temel istatistikler (raw + fmt)
       final avgVolume30Day = keyStats != null ? parseNum(keyStats['averageVolume10days']) ?? parseNum(keyStats['averageVolume']) : null;
-      final dividendYield = summary['dividendYield'] != null ? parseNum(summary['dividendYield']) : null;
+      final dividendYieldRaw = summary['dividendYield'] != null ? parseNum(summary['dividendYield']) : null;
+      final dividendYield = dividendYieldRaw;
       final trailingEps = keyStats != null ? parseNum(keyStats['trailingEps']) : null;
       final netIncome = financialData != null ? parseNum(financialData['netIncomeToCommon']) : null;
       final totalRevenue = financialData != null ? parseNum(financialData['totalRevenue']) : null;
       final sharesOutstanding = keyStats != null ? parseNum(keyStats['sharesOutstanding']) : null;
       final beta = keyStats != null ? parseNum(keyStats['beta']) : null;
+      final betaFromSummary = summary['beta'] != null ? parseNum(summary['beta']) : null;
+      final betaRes = beta ?? betaFromSummary;
 
-      // Genişletilmiş alanlar
+      // Formatlı stringler (UI'da .fmt veya '-')
+      final betaFmt = parseFmt(keyStats?['beta']) ?? parseFmt(summary['beta']) ?? (betaRes != null ? betaRes.toString() : null);
+      final piyasaDegeriFmt = parseFmt(summary['marketCap']);
+      final fKFmt = parseFmt(summary['trailingPE']);
+      final epsFmt = parseFmt(keyStats?['trailingEps']);
+      final temettuVerimiFmt = parseFmt(summary['dividendYield']);
+
+      // Genişletilmiş alanlar (financialData varsa)
       final enterpriseValue = keyStats != null ? parseNum(keyStats['enterpriseValue']) : null;
       final priceToBook = keyStats != null ? parseNum(keyStats['priceToBook']) : null;
       final priceToSales = summary['priceToSalesTrailing12Months'] != null ? parseNum(summary['priceToSalesTrailing12Months']) : null;
@@ -745,10 +834,21 @@ class YahooFinanceService {
       final returnOnAssets = financialData != null ? parseNum(financialData['returnOnAssets']) : null;
       final returnOnEquity = financialData != null ? parseNum(financialData['returnOnEquity']) : null;
       final debtToEquity = financialData != null ? parseNum(financialData['debtToEquity']) : null;
+      final currentRatio = financialData != null ? parseNum(financialData['currentRatio']) : null;
+      final targetMeanPrice = financialData != null ? parseNum(financialData['targetMeanPrice']) : null;
+      final ortalama50Gun = summary['fiftyDayAverage'] != null ? parseNum(summary['fiftyDayAverage']) : null;
+      final ortalama200Gun = summary['twoHundredDayAverage'] != null ? parseNum(summary['twoHundredDayAverage']) : null;
+      final pegRatio = keyStats != null ? parseNum(keyStats['pegRatio']) : null;
       final sector = assetProfile != null ? parseStr(assetProfile['sector']) : null;
       final industry = assetProfile != null ? parseStr(assetProfile['industry']) : null;
       final website = assetProfile != null ? parseStr(assetProfile['website']) : null;
       final fullTimeEmployees = assetProfile != null ? parseNum(assetProfile['fullTimeEmployees']) : null;
+      final longBusinessSummary = assetProfile != null ? parseStr(assetProfile['longBusinessSummary']) : null;
+      final floatShares = keyStats != null ? parseNum(keyStats['floatShares']) : null;
+      double? floatRate;
+      if (floatShares != null && sharesOutstanding != null && sharesOutstanding! > 0) {
+        floatRate = (floatShares / sharesOutstanding!) * 100;
+      }
       String? ceo;
       if (assetProfile != null) {
         final officers = assetProfile['companyOfficers'] as List<dynamic>?;
@@ -761,40 +861,6 @@ class YahooFinanceService {
       final state = assetProfile != null ? parseStr(assetProfile['state']) : null;
       final country = assetProfile != null ? parseStr(assetProfile['country']) : null;
       final headquarters = [city, state, country].whereType<String>().join(', ');
-      DateTime? ipoTarihi;
-      if (quoteType != null) {
-        final ts = quoteType['firstTradeDateEpochUtc'];
-        if (ts != null) {
-          final sec = ts is num ? ts.toInt() : int.tryParse(ts.toString());
-          if (sec != null && sec > 0) ipoTarihi = DateTime.fromMillisecondsSinceEpoch(sec * 1000);
-        }
-      }
-      DateTime? exDividendDate;
-      if (calendarEvents != null && calendarEvents['exDividendDate'] != null) {
-        final raw = calendarEvents['exDividendDate'];
-        if (raw is num) exDividendDate = DateTime.fromMillisecondsSinceEpoch(raw.toInt() * 1000);
-        else if (raw is String) exDividendDate = DateTime.tryParse(raw.split(' ').first);
-      }
-      DateTime? sonrakiKazancTarihi;
-      if (calendarEvents != null) {
-        final earnings = calendarEvents['earnings'] as Map<String, dynamic>?;
-        final dates = earnings?['earningsDate'] as List<dynamic>?;
-        if (dates != null && dates.isNotEmpty) {
-          final ts = dates.first;
-          if (ts != null) {
-            final sec = ts is num ? ts.toInt() : int.tryParse(ts.toString());
-            if (sec != null && sec > 0) sonrakiKazancTarihi = DateTime.fromMillisecondsSinceEpoch(sec * 1000);
-          }
-        }
-      }
-      double? iceridekilerYuzde;
-      double? kurumlarYuzde;
-      if (majorHolders != null) {
-        final ins = parseNum(majorHolders['insidersPercentHeld']);
-        final inst = parseNum(majorHolders['institutionsPercentHeld']);
-        iceridekilerYuzde = ins != null ? ins * 100 : null;
-        kurumlarYuzde = inst != null ? inst * 100 : null;
-      }
 
       return HisseDetayliBilgi(
         sembol: symbol,
@@ -812,12 +878,17 @@ class YahooFinanceService {
         ileriFK: parseNum(summary['forwardPE']),
         hacim: parseNum(summary['volume']),
         ortalamaHacim30Gun: avgVolume30Day,
-        temettuVerimi: dividendYield != null ? dividendYield * 100 : null, // Yüzde olarak
+        temettuVerimi: dividendYield != null ? dividendYield * 100 : null,
         basitHBK: trailingEps,
         netKazanc: netIncome,
         gelir: totalRevenue,
         halkaAcikHisseler: sharesOutstanding,
-        beta: beta,
+        beta: betaRes,
+        betaFmt: betaFmt,
+        piyasaDegeriFmt: piyasaDegeriFmt,
+        fKFmt: fKFmt,
+        epsFmt: epsFmt,
+        temettuVerimiFmt: temettuVerimiFmt,
         enterpriseValue: enterpriseValue,
         priceToBook: priceToBook,
         priceToSales: priceToSales,
@@ -830,17 +901,25 @@ class YahooFinanceService {
         returnOnAssets: returnOnAssets,
         returnOnEquity: returnOnEquity,
         debtToEquity: debtToEquity,
+        currentRatio: currentRatio,
+        targetMeanPrice: targetMeanPrice,
+        ortalama50Gun: ortalama50Gun,
+        ortalama200Gun: ortalama200Gun,
+        pegRatio: pegRatio,
         sector: sector,
         industry: industry,
         website: website,
+        longBusinessSummary: longBusinessSummary,
+        floatShares: floatShares,
+        floatRate: floatRate,
         fullTimeEmployees: fullTimeEmployees,
         ceo: ceo,
         headquarters: headquarters.isEmpty ? null : headquarters,
-        ipoTarihi: ipoTarihi,
-        exDividendDate: exDividendDate,
-        sonrakiKazancTarihi: sonrakiKazancTarihi,
-        iceridekilerYuzde: iceridekilerYuzde,
-        kurumlarYuzde: kurumlarYuzde,
+        ipoTarihi: null,
+        exDividendDate: null,
+        sonrakiKazancTarihi: null,
+        iceridekilerYuzde: null,
+        kurumlarYuzde: null,
       );
     } catch (e) {
       return _hisseDetayliBilgiFallback(symbol, chartMeta);
@@ -964,8 +1043,13 @@ class HisseDetayliBilgi {
   final double? gelir; // Total Revenue (FY)
   final double? halkaAcikHisseler; // Shares Outstanding
   final double? beta; // Beta (1Y)
+  final String? betaFmt;
+  final String? piyasaDegeriFmt;
+  final String? fKFmt;
+  final String? epsFmt;
+  final String? temettuVerimiFmt;
 
-  // Genişletilmiş alanlar (assetProfile, quoteType, calendarEvents, majorHoldersBreakdown)
+  // Genişletilmiş alanlar (assetProfile, summaryDetail, defaultKeyStatistics, financialData)
   final double? enterpriseValue;
   final double? priceToBook;
   final double? priceToSales;
@@ -978,12 +1062,20 @@ class HisseDetayliBilgi {
   final double? returnOnAssets;
   final double? returnOnEquity;
   final double? debtToEquity;
+  final double? currentRatio;   // Cari oran (likidite)
+  final double? targetMeanPrice; // Analist hedef fiyatı
+  final double? ortalama50Gun;   // 50 günlük hareketli ortalama
+  final double? ortalama200Gun;  // 200 günlük hareketli ortalama
+  final double? pegRatio;        // PEG oranı (büyüme değerleme)
   final String? sector;
   final String? industry;
   final String? website;
+  final String? longBusinessSummary; // Şirket açıklaması (ne iş yapar)
+  final double? floatShares;
+  final double? floatRate; // Fiili dolaşım oranı (%)
   final double? fullTimeEmployees;
   final String? ceo;
-  final String? headquarters;
+  final String? headquarters; // Adres: city, country
   final DateTime? ipoTarihi;
   final DateTime? exDividendDate;
   final DateTime? sonrakiKazancTarihi;
@@ -1012,6 +1104,11 @@ class HisseDetayliBilgi {
     this.gelir,
     this.halkaAcikHisseler,
     this.beta,
+    this.betaFmt,
+    this.piyasaDegeriFmt,
+    this.fKFmt,
+    this.epsFmt,
+    this.temettuVerimiFmt,
     this.enterpriseValue,
     this.priceToBook,
     this.priceToSales,
@@ -1024,9 +1121,17 @@ class HisseDetayliBilgi {
     this.returnOnAssets,
     this.returnOnEquity,
     this.debtToEquity,
+    this.currentRatio,
+    this.targetMeanPrice,
+    this.ortalama50Gun,
+    this.ortalama200Gun,
+    this.pegRatio,
     this.sector,
     this.industry,
     this.website,
+    this.longBusinessSummary,
+    this.floatShares,
+    this.floatRate,
     this.fullTimeEmployees,
     this.ceo,
     this.headquarters,

@@ -24,6 +24,7 @@ class HisseDetayPage extends StatefulWidget {
     this.eurKuru = 1.0,
     this.readOnly = false,
     this.portfoyAdi,
+    this.isMasked = false,
   });
 
   final PortfolioRow item;
@@ -34,6 +35,7 @@ class HisseDetayPage extends StatefulWidget {
   final bool readOnly;
   /// Hissenin ait olduğu portföy adı (liste ve detayda gösterilir)
   final String? portfoyAdi;
+  final bool isMasked;
 
   @override
   State<HisseDetayPage> createState() => _HisseDetayPageState();
@@ -52,7 +54,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
   /// ÖZET bölümünde gösterilecek metrik ID listesi (HisseKartiOzetService'den)
   List<String> _ozetMetrikler = List.from(defaultMetrikler);
   /// Özet düzenleme modu
-  bool _ozetDuzenlemeModu = false;
+  final bool _ozetDuzenlemeModu = false;
   
   Timer? _timer; // Added
 
@@ -72,13 +74,16 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
   void initState() {
     super.initState();
     _currentItem = widget.item;
+    _fiyatlarMaskeli = widget.isMasked;
+    
+    // Önce metrikleri yükle, sonra fiyat ve ek verileri çek
     HisseKartiOzetService.loadMetrikler().then((m) {
       if (mounted) {
         setState(() => _ozetMetrikler = m);
-        _ekVerileriYukle();
+        _fiyatYukle(); // Metrikler yüklendikten sonra ana fiyat yüklemesi
       }
     });
-    _fiyatYukle();
+
     _islemleriYukle();
     SupabasePortfolioService.notuOlanSemboller().then((s) {
       if (mounted) setState(() => _notuVar = s.contains(_currentItem.symbol));
@@ -237,7 +242,6 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
       }
     } catch (e) {
       // Hata oluşursa sessizce devam et, sayfayı kapatma
-      // Log için: print('_refreshItem error: $e');
       if (mounted) {
         try {
           await _fiyatYukle();
@@ -273,6 +277,8 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
   String _formatTutar(double v) => NumberFormat('#,##0.##', 'tr_TR').format(v);
 
   String _formatTutarGoster(double v) => _fiyatlarMaskeli ? '****' : _formatTutar(v);
+
+  String _formatMarketTutarGoster(double v) => _formatTutar(v);
 
   Future<void> _alarmKurDialog(BuildContext context, PortfolioRow item) async {
     await AlarmService.requestNotificationPermission();
@@ -404,10 +410,12 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         if (mounted) setState(() => _chartMeta = meta);
       } catch (_) {}
     } else {
-      if (mounted) setState(() {
+      if (mounted) {
+        setState(() {
         _chartMeta = null;
         _chartWithSeries = null;
       });
+      }
     }
   }
 
@@ -488,7 +496,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
           ),
           if (!widget.readOnly && fiyat != null && _hata == null)
             SliverToBoxAdapter(
-              child: _buildSabitAltBar(context, item: item, guncelFiyat: fiyat!),
+              child: _buildSabitAltBar(context, item: item, guncelFiyat: fiyat),
             ),
           SliverToBoxAdapter(
             child: Padding(
@@ -620,7 +628,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                               ],
                             ),
                           ),
-                          Divider(height: 1, color: Colors.grey.shade200),
+                          const SizedBox(height: 16),
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxHeight: 280),
                             child: _notlarYukleniyor
@@ -644,7 +652,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                                             physics: const ClampingScrollPhysics(),
                                             padding: EdgeInsets.zero,
                                             itemCount: _notlar!.length,
-                                            separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
+                                            separatorBuilder: (_, __) => const SizedBox(height: 16),
                                             itemBuilder: (context, index) {
                                               final not = _notlar![index];
                                               return Padding(
@@ -734,10 +742,10 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                               ? _buildBilgiKartlari(
                                   context,
                                   item: item,
-                                  guncelFiyat: fiyat!,
-                                  guncelDeger: guncelDeger!,
-                                  karZarar: karZarar!,
-                                  karZararYuzde: karZararYuzde!,
+                                  guncelFiyat: fiyat,
+                                  guncelDeger: guncelDeger,
+                                  karZarar: karZarar,
+                                  karZararYuzde: karZararYuzde,
                                 )
                               : const SizedBox.shrink(), // Fiyat henüz yüklenmediyse boş göster
                 ],
@@ -864,7 +872,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         case 'adet':
           kartlar[id] = _OzetKart(
             baslik: 'Adet',
-            deger: '${item.totalQuantity.toStringAsFixed(0)} adet',
+            deger: '${_fiyatlarMaskeli ? '****' : item.totalQuantity.toStringAsFixed(0)} adet',
             ikon: Icons.inventory_2_outlined,
           );
           break;
@@ -893,7 +901,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         case 'anlik_fiyat':
           kartlar[id] = _OzetKart(
             baslik: 'Anlık fiyat',
-            deger: '${_formatTutarGoster(_dovizCevir(guncelFiyat))} $sembol',
+            deger: '${_formatMarketTutarGoster(_dovizCevir(guncelFiyat))} $sembol',
             ikon: Icons.show_chart,
             degerStyle: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppTheme.navyBlue),
           );
@@ -939,7 +947,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      '${(karZararYuzde ?? 0) >= 0 ? '+' : ''}${(karZararYuzde ?? 0).toStringAsFixed(2)}%',
+                      _fiyatlarMaskeli ? '****%' : '${(karZararYuzde ?? 0) >= 0 ? '+' : ''}${(karZararYuzde ?? 0).toStringAsFixed(2)}%',
                       style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.chipGreen(isKar)),
                     ),
                   ),
@@ -950,14 +958,14 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         case 'dun_kapanis':
           kartlar[id] = _OzetKart(
             baslik: 'Dünkü kapanış',
-            deger: prevClose != null ? '${_formatTutarGoster(_dovizCevir(prevClose))} $sembol' : '—',
+            deger: prevClose != null ? '${_formatMarketTutarGoster(_dovizCevir(prevClose))} $sembol' : '—',
             ikon: Icons.calendar_today_rounded,
           );
           break;
         case 'son_1_gun_degisim':
           kartlar[id] = _OzetKart(
             baslik: 'Son 1 gün değişim',
-            deger: son1GunDegisim != null ? '${son1GunDegisim >= 0 ? '+' : ''}${_formatTutarGoster(_dovizCevir(son1GunDegisim))} $sembol' : '—',
+            deger: son1GunDegisim != null ? '${son1GunDegisim >= 0 ? '+' : ''}${_formatMarketTutarGoster(_dovizCevir(son1GunDegisim))} $sembol' : '—',
             ikon: Icons.trending_up_rounded,
             degerStyle: son1GunDegisim != null
                 ? GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: son1GunDegisim >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed)
@@ -977,7 +985,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         case 'son_1_hafta_degisim':
           kartlar[id] = _OzetKart(
             baslik: 'Son 1 hafta değişim',
-            deger: son1HaftaDegisim != null ? '${son1HaftaDegisim >= 0 ? '+' : ''}${_formatTutarGoster(_dovizCevir(son1HaftaDegisim))} $sembol' : '—',
+            deger: son1HaftaDegisim != null ? '${son1HaftaDegisim >= 0 ? '+' : ''}${_formatMarketTutarGoster(_dovizCevir(son1HaftaDegisim))} $sembol' : '—',
             ikon: Icons.show_chart_rounded,
             degerStyle: son1HaftaDegisim != null
                 ? GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: son1HaftaDegisim >= 0 ? AppTheme.emeraldGreen : AppTheme.softRed)
@@ -997,28 +1005,28 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         case '52_hafta_en_yuksek':
           kartlar[id] = _OzetKart(
             baslik: '52 hafta en yüksek',
-            deger: week52High != null ? '${_formatTutarGoster(_dovizCevir(week52High))} $sembol' : '—',
+            deger: week52High != null ? '${_formatMarketTutarGoster(_dovizCevir(week52High))} $sembol' : '—',
             ikon: Icons.arrow_upward_rounded,
           );
           break;
         case '52_hafta_en_dusuk':
           kartlar[id] = _OzetKart(
             baslik: '52 hafta en düşük',
-            deger: week52Low != null ? '${_formatTutarGoster(_dovizCevir(week52Low))} $sembol' : '—',
+            deger: week52Low != null ? '${_formatMarketTutarGoster(_dovizCevir(week52Low))} $sembol' : '—',
             ikon: Icons.arrow_downward_rounded,
           );
           break;
         case 'gunluk_yuksek':
           kartlar[id] = _OzetKart(
             baslik: 'Günlük en yüksek',
-            deger: dayHigh != null ? '${_formatTutarGoster(_dovizCevir(dayHigh))} $sembol' : '—',
+            deger: dayHigh != null ? '${_formatMarketTutarGoster(_dovizCevir(dayHigh))} $sembol' : '—',
             ikon: Icons.trending_up_rounded,
           );
           break;
         case 'gunluk_dusuk':
           kartlar[id] = _OzetKart(
             baslik: 'Günlük en düşük',
-            deger: dayLow != null ? '${_formatTutarGoster(_dovizCevir(dayLow))} $sembol' : '—',
+            deger: dayLow != null ? '${_formatMarketTutarGoster(_dovizCevir(dayLow))} $sembol' : '—',
             ikon: Icons.trending_down_rounded,
           );
           break;
@@ -1240,6 +1248,15 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
             ),
             PopupMenuButton<String>(
               padding: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              onSelected: (v) => setState(() => _islemFiltre = v),
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'all', child: Text('Tümü', style: TextStyle(fontSize: 13))),
+                const PopupMenuItem(value: 'buy', child: Text('Alım', style: TextStyle(fontSize: 13))),
+                const PopupMenuItem(value: 'sell', child: Text('Satım', style: TextStyle(fontSize: 13))),
+                const PopupMenuItem(value: 'split', child: Text('Bölünme', style: TextStyle(fontSize: 13))),
+                const PopupMenuItem(value: 'dividend', child: Text('Temettü', style: TextStyle(fontSize: 13))),
+              ],
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1250,15 +1267,6 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                   Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.darkSlate.withValues(alpha: 0.7), size: 18),
                 ],
               ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              onSelected: (v) => setState(() => _islemFiltre = v),
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'all', child: Text('Tümü', style: TextStyle(fontSize: 13))),
-                const PopupMenuItem(value: 'buy', child: Text('Alım', style: TextStyle(fontSize: 13))),
-                const PopupMenuItem(value: 'sell', child: Text('Satım', style: TextStyle(fontSize: 13))),
-                const PopupMenuItem(value: 'split', child: Text('Bölünme', style: TextStyle(fontSize: 13))),
-                const PopupMenuItem(value: 'dividend', child: Text('Temettü', style: TextStyle(fontSize: 13))),
-              ],
             ),
           ],
         ),
@@ -1354,7 +1362,7 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                                               fit: BoxFit.scaleDown,
                                               alignment: Alignment.centerLeft,
                                               child: Text(
-                                                '${islem.quantity!.toStringAsFixed(0)} adet × ${_formatTutarGoster(islem.price)} TL',
+                                                '${_fiyatlarMaskeli ? '****' : islem.quantity!.toStringAsFixed(0)} adet × ${_formatTutarGoster(islem.price)} TL',
                                                 style: AppTheme.bodySmall(context).copyWith(fontSize: 11),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
@@ -1631,9 +1639,11 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                         });
                       }
                     } catch (e) {
-                      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
                         SnackBar(content: Text('Hata: ${e.toString().split('\n').first}'), backgroundColor: AppTheme.softRed, behavior: SnackBarBehavior.floating),
                       );
+                      }
                     }
                   },
                   child: const Text('Satışı Onayla'),
@@ -1772,9 +1782,11 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                       );
                       if (ctx.mounted) Navigator.pop(ctx, a);
                     } catch (e) {
-                      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
                         SnackBar(content: Text('Hata: ${e.toString().split('\n').first}'), backgroundColor: AppTheme.softRed, behavior: SnackBarBehavior.floating),
                       );
+                      }
                     }
                   },
                   child: const Text('Kaydet'),
@@ -1906,9 +1918,11 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
                       );
                       if (ctx.mounted) Navigator.pop(ctx, t);
                     } catch (e) {
-                      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
                         SnackBar(content: Text('Hata: ${e.toString().split('\n').first}'), backgroundColor: AppTheme.softRed, behavior: SnackBarBehavior.floating),
                       );
+                      }
                     }
                   },
                   child: const Text('Kaydet'),
@@ -2228,10 +2242,12 @@ class _AlarmKurDialogContentState extends State<_AlarmKurDialogContent> {
 
   Future<void> _loadAlarms() async {
     final list = await AlarmStorageService.getAlarmsForSymbol(widget.symbol);
-    if (mounted) setState(() {
+    if (mounted) {
+      setState(() {
       _alarms = list;
       _loading = false;
     });
+    }
   }
 
   Future<void> _toggleAlarm(StockAlarmLocal alarm) async {
@@ -2359,8 +2375,6 @@ class _AlarmKurDialogContentState extends State<_AlarmKurDialogContent> {
                     ),
                   );
                 }),
-                const SizedBox(height: 16),
-                const Divider(height: 1),
                 const SizedBox(height: 16),
               ],
               Text(

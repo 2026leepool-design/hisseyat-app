@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "881387238093",
+    "project_id": "hisseyatapp2026",
+    "storage_bucket": "hisseyatapp2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:881387238093:android:490986a0e787335d13af84",
+        "android_client_info": {
+          "package_name": "com.example.ilk_deneme"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCbJJ2Vu--5kz3GAAQdkIWtlyA9T0A8924"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -145,8 +145,7 @@ class _PortfolioShareScreenState extends State<PortfolioShareScreen> {
               ),
             ],
             if (_seciliUserId != null) ...[
-              const Divider(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 16),
               FilledButton.icon(
                 onPressed: _paylas,
                 icon: const Icon(Icons.share),

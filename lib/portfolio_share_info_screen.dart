@@ -299,7 +299,7 @@ class _PortfolioShareInfoScreenState extends State<PortfolioShareInfoScreen> {
                                 ),
                               );
                             }),
-                            const Divider(height: 24),
+                            const SizedBox(height: 24),
                             Text('Yeni paylaşım ekle', style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 14)),
                           ] else ...[
                             Text(
