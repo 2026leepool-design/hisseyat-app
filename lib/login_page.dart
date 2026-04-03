@@ -1,6 +1,4 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -222,8 +220,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       final GoogleSignIn googleSignIn = GoogleSignIn(
         serverClientId: dotenv.env['GOOGLE_WEB_CLIENT_ID'],
       );
+
       final googleUser = await googleSignIn.signIn();
-      
       if (googleUser == null) throw 'Giriş iptal edildi.';
 
       final googleAuth = await googleUser.authentication;
@@ -269,11 +267,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       await supabase.auth.resetPasswordForEmail(email);
       _showSuccess('Şifre sıfırlama bağlantısı e-posta adresinize gönderildi.');
     } on AuthException catch (e) {
-      print('Auth Hata Kodu: ${e.code}');
-      print('Auth Hata Mesajı: ${e.message}');
       _showError(e.message);
     } catch (e) {
-      print('Beklenmedik Hata: $e');
       _showError('Hata oluştu: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -346,7 +341,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                       );
                     }
                   } on AuthException catch (e) {
-                    debugPrint('OTP Hatası: ${e.message}');
                     ScaffoldMessenger.of(this.context).showSnackBar(
                       SnackBar(content: Text('Hata: ${e.message}'), backgroundColor: AppTheme.softRed),
                     );

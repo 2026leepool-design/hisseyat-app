@@ -161,7 +161,9 @@ class _HisseDetayPageState extends State<HisseDetayPage> {
         ],
       ),
     );
-    noteCtrl.dispose();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      noteCtrl.dispose();
+    });
     final metin = notMetni?.trim();
     if (result != true || metin == null || metin.isEmpty) return;
     try {

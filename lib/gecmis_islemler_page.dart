@@ -80,6 +80,7 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
   Future<void> _tarihAraligiSec() async {
     final picked = await showDialog<({DateTime start, DateTime end})>(
       context: context,
+      useRootNavigator: true,
       builder: (ctx) => _TarihAraligiDialog(
         baslangic: _baslangicTarihi,
         bitis: _bitisTarihi,
@@ -97,108 +98,141 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
   }
 
   void _filtreMenusuAc() {
-    showModalBottomSheet(
+    // Geçersiz dropdown değeri (silinen portföy / filtre sonrası kaybolan hisse) sheet build'ini patlatır.
+    setState(() {
+      if (_seciliPortfoyId != null &&
+          !_portfoyler.any((p) => p.id == _seciliPortfoyId)) {
+        _seciliPortfoyId = null;
+      }
+      if (_seciliHisse != null && !_hisseListesi.contains(_seciliHisse)) {
+        _seciliHisse = null;
+      }
+    });
+
+    // Kök navigator + isScrollControlled + şeffaf arka plan bazı cihaz/yatay modda
+    // içeriği 0 yükseklikte veya görünmez bırakabiliyor; sheet sekme Navigator'ında açılır.
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        margin: const EdgeInsets.all(12),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: AppTheme.softShadow,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade400,
-                  borderRadius: BorderRadius.circular(8),
+      builder: (ctx) {
+        final sheetTheme = Theme.of(ctx);
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            bottom: 12 + MediaQuery.viewPaddingOf(ctx).bottom,
+          ),
+          child: Material(
+            clipBehavior: Clip.antiAlias,
+            borderRadius: BorderRadius.circular(16),
+            elevation: 6,
+            shadowColor: AppTheme.onSurface.withValues(alpha: 0.12),
+            color: sheetTheme.colorScheme.surfaceContainerLowest,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(ctx).height * 0.92,
+              ),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade400,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text('Filtreler', style: AppTheme.h2(ctx)),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _seciliPortfoyId,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: 'Portföy',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(value: null, child: Text('Tümü')),
+                          ..._portfoyler.map((p) {
+                            // DropdownMenuItem popup sonsuz genişlikte açılır; Expanded kullanmak
+                            // "unbounded width" hatasına yol açar. İsim + ipucu düz Text'e dönüştürülür.
+                            final hint = (p.isSharedWithMe && p.ownerEmailHint != null)
+                                ? ' (@${p.ownerEmailHint})'
+                                : (p.isShared ? ' ↑' : '');
+                            return DropdownMenuItem<String>(
+                              value: p.id,
+                              child: Text(
+                                '${p.name}$hint',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _seciliPortfoyId = value;
+                            _seciliHisse = null;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        value: _seciliHisse,
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: 'Hisse',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(value: null, child: Text('TÜMÜ')),
+                          ..._hisseListesi.map((s) => DropdownMenuItem<String>(
+                                value: s,
+                                child: Text(LogoService.symbolForDisplay(s),
+                                    overflow: TextOverflow.ellipsis),
+                              )),
+                        ],
+                        onChanged: (value) => setState(() => _seciliHisse = value),
+                      ),
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          await _tarihAraligiSec();
+                        },
+                        icon: const Icon(Icons.date_range),
+                        label: Text(
+                          '${DateFormat('dd.MM.yyyy', 'tr_TR').format(_baslangicTarihi)} - ${DateFormat('dd.MM.yyyy', 'tr_TR').format(_bitisTarihi)}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _yukle();
+                        },
+                        child: const Text('Uygula'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-            const SizedBox(height: 14),
-            Text('Filtreler', style: AppTheme.h2(context)),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _seciliPortfoyId,
-              decoration: InputDecoration(
-                labelText: 'Portföy',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text('Tümü')),
-                ..._portfoyler.map((p) => DropdownMenuItem<String>(
-                      value: p.id,
-                      child: Row(
-                        children: [
-                          Expanded(child: Text(p.name, overflow: TextOverflow.ellipsis)),
-                          if (p.isShared) ...[
-                            const SizedBox(width: 6),
-                            Icon(Icons.people_outline, size: 14, color: Colors.grey[600]),
-                            if (p.isSharedWithMe && p.ownerEmailHint != null) ...[
-                              const SizedBox(width: 4),
-                              Text('(@${p.ownerEmailHint})', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                            ],
-                          ],
-                        ],
-                      ),
-                    )),
-              ],
-              onChanged: (value) {
-                setState(() {
-                  _seciliPortfoyId = value;
-                  _seciliHisse = null;
-                });
-              },
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              value: _seciliHisse,
-              decoration: InputDecoration(
-                labelText: 'Hisse',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text('TÜMÜ')),
-                ..._hisseListesi.map((s) => DropdownMenuItem<String>(
-                      value: s,
-                      child: Text(LogoService.symbolForDisplay(s), overflow: TextOverflow.ellipsis),
-                    )),
-              ],
-              onChanged: (value) => setState(() => _seciliHisse = value),
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await _tarihAraligiSec();
-              },
-              icon: const Icon(Icons.date_range),
-              label: Text(
-                '${DateFormat('dd.MM.yyyy', 'tr_TR').format(_baslangicTarihi)} - ${DateFormat('dd.MM.yyyy', 'tr_TR').format(_bitisTarihi)}',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () {
-                Navigator.pop(ctx);
-                _yukle();
-              },
-              child: const Text('Uygula'),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -534,29 +568,55 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.backgroundGrey(context),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Geçmiş İşlemler',
-                        style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppTheme.darkSlate),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 4, 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: Text(
+                      'Geçmiş İşlemler',
+                      style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w700, color: AppTheme.darkSlate),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Expanded(
+                    flex: 3,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: _tarihAraligiSec,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                            child: Text(
+                              '${DateFormat('dd.MM.yy', 'tr_TR').format(_baslangicTarihi)} - ${DateFormat('dd.MM.yy', 'tr_TR').format(_bitisTarihi)}',
+                              style: AppTheme.bodySmall(context).copyWith(color: AppTheme.navyBlue),
+                              textAlign: TextAlign.end,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                    Text(
-                      '${DateFormat('dd.MM.yy', 'tr_TR').format(_baslangicTarihi)} - ${DateFormat('dd.MM.yy', 'tr_TR').format(_bitisTarihi)}',
-                      style: AppTheme.bodySmall(context),
-                    ),
-                  ],
-                ),
+                  ),
+                  IconButton(
+                    onPressed: _filtreMenusuAc,
+                    icon: Icon(Icons.tune_rounded, color: AppTheme.navyBlue),
+                    tooltip: 'Filtreler (portföy, hisse, tarih)',
+                  ),
+                ],
               ),
-              Expanded(
+            ),
+            Expanded(
             child: _yukleniyor
                 ? Center(child: CircularProgressIndicator(color: AppTheme.navyBlue))
                 : _islemler.isEmpty
@@ -617,7 +677,7 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
                                       StockLogo(symbol: symbol, size: 30),
                                       const SizedBox(width: 8),
                                       Expanded(
-                                        flex: 3,
+                                        flex: 2,
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           mainAxisSize: MainAxisSize.min,
@@ -652,35 +712,57 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
                                           ],
                                         ),
                                       ),
-                                      // Sol sütun: daha kompakt özet
                                       Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            _MiniSatir('Alım', _formatTutar(ozet.toplamAlimBedeli)),
-                                            _MiniSatir('Satım', _formatTutar(ozet.toplamSatisBedeli)),
-                                          ],
-                                        ),
-                                      ),
-                                      Expanded(
+                                        flex: 6,
                                         child: Builder(
                                           builder: (context) {
                                             final kz = _grupKarZarar(symbol);
                                             return Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              crossAxisAlignment: CrossAxisAlignment.stretch,
                                               mainAxisSize: MainAxisSize.min,
                                               children: [
-                                                _MiniSatir('Eldeki', ozet.eldekiAdet.toStringAsFixed(0)),
-                                                if (kz.tutar != null)
-                                                  _MiniSatir(
-                                                    'K/Z',
-                                                    '${kz.tutar! >= 0 ? '+' : ''}${_formatTutar(kz.tutar!)}  ${kz.yuzde! >= 0 ? '+' : ''}${kz.yuzde!.toStringAsFixed(1)}%',
-                                                    karda: kz.tutar! >= 0,
-                                                    bold: ozet.eldekiAdet == 0,
-                                                  )
-                                                else
-                                                  _MiniSatir('K/Z', '—'),
+                                                Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Expanded(
+                                                      child: _GecmisOzetHucre(
+                                                        label: 'Alım',
+                                                        value: _formatTutar(ozet.toplamAlimBedeli),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: _GecmisOzetHucre(
+                                                        label: 'Eldeki',
+                                                        value: ozet.eldekiAdet.toStringAsFixed(0),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Row(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Expanded(
+                                                      child: _GecmisOzetHucre(
+                                                        label: 'Satım',
+                                                        value: _formatTutar(ozet.toplamSatisBedeli),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: kz.tutar != null
+                                                          ? _GecmisOzetHucre(
+                                                              label: 'K/Z',
+                                                              value:
+                                                                  '${kz.tutar! >= 0 ? '+' : ''}${_formatTutar(kz.tutar!)}  ${kz.yuzde! >= 0 ? '+' : ''}${kz.yuzde!.toStringAsFixed(1)}%',
+                                                              karda: kz.tutar! >= 0,
+                                                              bold: ozet.eldekiAdet == 0,
+                                                            )
+                                                          : const _GecmisOzetHucre(label: 'K/Z', value: '—'),
+                                                    ),
+                                                  ],
+                                                ),
                                               ],
                                             );
                                           },
@@ -816,57 +898,48 @@ class _GecmisIslemlerPageState extends State<GecmisIslemlerPage> {
           ),
             ],
           ),
-          Positioned(
-            top: 12,
-            right: 12,
-            child: Material(
-              color: Colors.black.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(24),
-              child: IconButton(
-                onPressed: _filtreMenusuAc,
-                icon: const Icon(Icons.tune_rounded, color: Colors.white),
-                tooltip: 'Filtreler',
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
     );
   }
 }
 
-class _MiniSatir extends StatelessWidget {
+/// Kart üstünde etiket + değer bitişik; sütunlar arasında [SizedBox] ile boşluk üst widget’ta verilir.
+class _GecmisOzetHucre extends StatelessWidget {
   final String label;
   final String value;
   final bool? karda;
   final bool bold;
 
-  const _MiniSatir(this.label, this.value, {this.karda, this.bold = false});
+  const _GecmisOzetHucre({
+    required this.label,
+    required this.value,
+    this.karda,
+    this.bold = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final valueStyle = GoogleFonts.inter(
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
       color: karda != null ? AppTheme.chipGreen(karda!) : AppTheme.darkSlate,
     );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label: ', style: AppTheme.bodySmall(context).copyWith(fontSize: 10)),
-          Expanded(
-            child: Text(
-              value,
-              style: valueStyle,
-              textAlign: TextAlign.end,
-              overflow: TextOverflow.ellipsis,
-              maxLines: 2,
-            ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text('$label:', style: AppTheme.bodySmall(context).copyWith(fontSize: 11)),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            value,
+            style: valueStyle,
+            textAlign: TextAlign.start,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -220,6 +220,17 @@ class _MyHomePageState extends State<MyHomePage> {
     return true;
   }
 
+  /// Bu satır için alım/satım (kaydırma) izni. "Tüm portföyler"de her satır kendi portföyüne göre değerlendirilir.
+  bool _rowAlimSatimIzinli(PortfolioRow item) {
+    if (!_seciliPortfoyDuzenlenebilir) return false;
+    if (_seciliPortfoyId != null) return true;
+    final pid = item.portfolioId;
+    if (pid == null) return true;
+    final p = _portfoyler.where((x) => x.id == pid).firstOrNull;
+    if (p == null) return true;
+    return !p.isSharedWithMe;
+  }
+
   /// Seçili portföye göre liste başlığı (paylaşılan portföyde kullanıcı adı dahil)
   String get _portfoyBaslik {
     if (_seciliPortfoyId == null) return 'Portföylerim';
@@ -1216,30 +1227,12 @@ class _MyHomePageState extends State<MyHomePage> {
                   expandedHeight: 100,
                   pinned: true,
                   centerTitle: true,
+                  leadingWidth: 72,
                   backgroundColor: AppTheme.navyBlue,
-                  leading: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.25),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(6),
-                            child: AppLogo(size: 40, forDarkBackground: true),
-                          ),
-                        ),
-                      ),
+                  leading: Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Center(
+                      child: AppLogo(size: 60, forDarkBackground: true),
                     ),
                   ),
                   flexibleSpace: FlexibleSpaceBar(
@@ -1964,10 +1957,11 @@ class _MyHomePageState extends State<MyHomePage> {
                                       _seciliPortfoyId != null &&
                                       (item.portfolioId == _seciliPortfoyId) &&
                                       hedefCuzdanlar.isNotEmpty;
-                                  final aksiyonlarVar = _seciliPortfoyDuzenlenebilir;
-                                  final portfoyAdi = item.portfolioId != null
-                                      ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.name
+                                  final aksiyonlarVar = _rowAlimSatimIzinli(item);
+                                  final portfoyKayit = item.portfolioId != null
+                                      ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull
                                       : null;
+                                  final portfoyAdi = portfoyKayit?.name;
 
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 14),
@@ -2001,6 +1995,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                               backgroundColor: AppTheme.navyBlue,
                                               foregroundColor: Colors.white,
                                               icon: Icons.drive_file_move_rounded,
+                                              label: 'Taşı',
                                             ),
                                           SlidableAction(
                                             onPressed: (ctx) {
@@ -2022,12 +2017,11 @@ class _MyHomePageState extends State<MyHomePage> {
                                         karda: karda,
                                         hasNote: _notuOlanSemboller.contains(item.symbol),
                                         portfoyAdi: portfoyAdi,
-                                        isPortfoyShared: item.portfolioId != null
-                                            ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.isShared ?? false
-                                            : false,
-                                        ownerEmailHint: item.portfolioId != null
-                                            ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.ownerEmailHint
-                                            : null,
+                                        isSharedWithMe: portfoyKayit?.isSharedWithMe ?? false,
+                                        hasOutgoingShares: portfoyKayit != null &&
+                                            portfoyKayit.hasShares &&
+                                            !portfoyKayit.isSharedWithMe,
+                                        ownerEmailHint: portfoyKayit?.ownerEmailHint,
                                         degisimYuzde: guncelBilgi?.degisimYuzde, // Added
                                         formatTutar: (v) => _fiyatlarMaskeli ? '****' : _formatTutar(v),
                                         dovizCevir: _dovizCevir,
@@ -2042,7 +2036,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                                 seciliDoviz: _seciliDoviz,
                                                 usdKuru: _usdKuru,
                                                 eurKuru: _eurKuru,
-                                                readOnly: !_seciliPortfoyDuzenlenebilir,
+                                                readOnly: !_rowAlimSatimIzinli(item),
                                                 portfoyAdi: portfoyAdi,
                                                 isMasked: _fiyatlarMaskeli,
                                               ),
@@ -2059,12 +2053,12 @@ class _MyHomePageState extends State<MyHomePage> {
                                             karZararTutar: karZararTutar,
                                             karda: karda,
                                             hasNote: _notuOlanSemboller.contains(item.symbol),
-                                            portfoyAdi: item.portfolioId != null
-                                                ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.name
-                                                : null,
-                                            isPortfoyShared: item.portfolioId != null
-                                                ? _portfoyler.where((p) => p.id == item.portfolioId).firstOrNull?.isShared ?? false
-                                                : false,
+                                            portfoyAdi: portfoyAdi,
+                                            isSharedWithMe: portfoyKayit?.isSharedWithMe ?? false,
+                                            hasOutgoingShares: portfoyKayit != null &&
+                                                portfoyKayit.hasShares &&
+                                                !portfoyKayit.isSharedWithMe,
+                                            ownerEmailHint: portfoyKayit?.ownerEmailHint,
                                             degisimYuzde: guncelBilgi?.degisimYuzde, // Added
                                             formatTutar: (v) => _fiyatlarMaskeli ? '****' : _formatTutar(v),
                                             dovizCevir: _dovizCevir,
@@ -2082,7 +2076,7 @@ class _MyHomePageState extends State<MyHomePage> {
                                                 seciliDoviz: _seciliDoviz,
                                                 usdKuru: _usdKuru,
                                                 eurKuru: _eurKuru,
-                                                readOnly: !_seciliPortfoyDuzenlenebilir,
+                                                readOnly: !_rowAlimSatimIzinli(item),
                                                 portfoyAdi: portfoyAdi,
                                                 isMasked: _fiyatlarMaskeli,
                                               ),
@@ -2262,8 +2256,11 @@ class _ModernDovizSecici extends StatelessWidget {
   }
 }
 
-/// Bordo renk: hisseye not girilmişse not ikonu bu renkte
-const _notIconBordo = Color(0xFF800020);
+/// Not varken ikon + zemin (kartta kolay seçilir)
+const _notIconBrightLight = Color(0xFF1D4ED8);
+const _notIconBrightDark = Color(0xFF93C5FD);
+const _notIconBgLight = Color(0xFFDBEAFE);
+const _notIconBgDark = Color(0xFF1E3A5F);
 
 class _HisseKarti extends StatefulWidget {
   final PortfolioRow item;
@@ -2274,7 +2271,10 @@ class _HisseKarti extends StatefulWidget {
   final bool karda;
   final bool hasNote;
   final String? portfoyAdi;
-  final bool isPortfoyShared;
+  /// Başkasının bana paylaştığı portföy
+  final bool isSharedWithMe;
+  /// Sahibi olduğum ve başkalarıyla paylaştığım portföy
+  final bool hasOutgoingShares;
   final String? ownerEmailHint;
   final double? degisimYuzde; // Added
   final String Function(double) formatTutar;
@@ -2293,7 +2293,8 @@ class _HisseKarti extends StatefulWidget {
     required this.karda,
     this.hasNote = false,
     this.portfoyAdi,
-    this.isPortfoyShared = false,
+    this.isSharedWithMe = false,
+    this.hasOutgoingShares = false,
     this.ownerEmailHint,
     this.degisimYuzde, // Added
     required this.formatTutar,
@@ -2389,8 +2390,10 @@ class _HisseKartiState extends State<_HisseKarti> {
       ),
     );
 
-    // Dialog kapandıktan sonra dispose et
-    noteCtrl.dispose();
+    // Route kapanırken TextField hâlâ controller'a bağlı olabiliyor; hemen dispose _dependents assert'ine yol açar.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      noteCtrl.dispose();
+    });
 
     final metin = notMetni?.trim();
     final symbol = widget.item.symbol;
@@ -2465,32 +2468,50 @@ class _HisseKartiState extends State<_HisseKarti> {
                         children: [
                           if (widget.portfoyAdi != null && widget.portfoyAdi!.isNotEmpty) ...[
                             Row(
-                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
-                                Flexible(
+                                Expanded(
                                   child: Text(
                                     widget.portfoyAdi!,
-                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                      fontSize: 9,
-                                      color: Colors.grey.shade500,
-                                    ) ?? TextStyle(fontSize: 9, color: Colors.grey.shade500),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                          fontSize: 10,
+                                          color: Colors.grey.shade600,
+                                          fontWeight: FontWeight.w600,
+                                        ) ??
+                                        TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey.shade600,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                   ),
                                 ),
-                                if (widget.isPortfoyShared) ...[
+                                if (widget.isSharedWithMe) ...[
                                   const SizedBox(width: 4),
-                                  Icon(Icons.people_outline, size: 10, color: Colors.grey[500]),
-                                  if (widget.ownerEmailHint != null && widget.ownerEmailHint!.isNotEmpty) ...[
-                                    const SizedBox(width: 2),
-                                    Text(
-                                      '(@${widget.ownerEmailHint})',
-                                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                        fontSize: 8,
-                                        color: Colors.grey.shade500,
+                                  Icon(Icons.people_outline, size: 12, color: Colors.grey[600]),
+                                  if (widget.ownerEmailHint != null &&
+                                      widget.ownerEmailHint!.isNotEmpty) ...[
+                                    const SizedBox(width: 3),
+                                    Expanded(
+                                      child: Text(
+                                        '(@${widget.ownerEmailHint})',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                              fontSize: 10,
+                                              color: Colors.grey.shade600,
+                                              fontWeight: FontWeight.w500,
+                                            ) ??
+                                            TextStyle(fontSize: 10, color: Colors.grey.shade600),
                                       ),
                                     ),
                                   ],
+                                ],
+                                if (widget.hasOutgoingShares) ...[
+                                  const SizedBox(width: 4),
+                                  Icon(Icons.people_outline, size: 12, color: Colors.grey[600]),
+                                  Icon(Icons.north_east, size: 11, color: Colors.grey[600]),
                                 ],
                               ],
                             ),
@@ -2557,23 +2578,31 @@ class _HisseKartiState extends State<_HisseKarti> {
                                   ),
                                 ),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.edit_note_rounded, size: 22),
-                                onPressed: () {
-                                  setState(() => _notlarAcik = !_notlarAcik);
-                                  if (_notlarAcik && _notlar == null) _notlariYukle();
+                              Builder(
+                                builder: (context) {
+                                  final notVar =
+                                      _notlar != null ? _notlar!.isNotEmpty : widget.hasNote;
+                                  final isDark = Theme.of(context).brightness == Brightness.dark;
+                                  return IconButton(
+                                    icon: const Icon(Icons.edit_note_rounded, size: 22),
+                                    onPressed: () {
+                                      setState(() => _notlarAcik = !_notlarAcik);
+                                      if (_notlarAcik && _notlar == null) _notlariYukle();
+                                    },
+                                    color: notVar
+                                        ? (isDark ? _notIconBrightDark : _notIconBrightLight)
+                                        : (_notlarAcik ? AppTheme.navyBlue : Colors.grey.shade600),
+                                    style: IconButton.styleFrom(
+                                      padding: const EdgeInsets.all(6),
+                                      minimumSize: const Size(36, 36),
+                                      shape: const CircleBorder(),
+                                      backgroundColor: notVar
+                                          ? (isDark ? _notIconBgDark : _notIconBgLight)
+                                          : null,
+                                    ),
+                                    tooltip: 'Notlar',
+                                  );
                                 },
-                                color: () {
-                                  final notVar = _notlar != null ? _notlar!.isNotEmpty : widget.hasNote;
-                                  if (notVar) return _notIconBordo;
-                                  if (_notlarAcik) return AppTheme.navyBlue;
-                                  return Colors.grey.shade600;
-                                }(),
-                                style: IconButton.styleFrom(
-                                  padding: const EdgeInsets.all(6),
-                                  minimumSize: const Size(36, 36),
-                                ),
-                                tooltip: 'Notlar',
                               ),
                             ],
                           ),

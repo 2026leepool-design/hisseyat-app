@@ -7,12 +7,25 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:881387238093:android:490986a0e787335d13af84",
+        "mobilesdk_app_id": "1:881387238093:android:4a1eee857137711713af84",
         "android_client_info": {
           "package_name": "com.hisseyat.hisseliharikalar"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "881387238093-dalhen708gj39t197in124knpv8b6dem.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hisseyat.hisseliharikalar",
+            "certificate_hash": "2331c0ab116875ff64db3816c46070e3a2d53687"
+          }
+        },
+        {
+          "client_id": "881387238093-0fo2g39c1igtg711komt64pan5gdathe.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCbJJ2Vu--5kz3GAAQdkIWtlyA9T0A8924"
@@ -20,7 +33,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "881387238093-0fo2g39c1igtg711komt64pan5gdathe.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }
